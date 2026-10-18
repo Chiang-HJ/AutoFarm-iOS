@@ -1,13 +1,17 @@
 import AVFoundation
 import Foundation
 
-/// Plays near-silent audio so iOS keeps Locus runnable (and able to accept
-/// TCP) while the user is in Settings › Developer Mode.
-final class SilentAudioKeepAlive {
+/// Plays near-silent audio so iOS keeps AutoFarm runnable (and able to accept
+/// TCP) while in background.
+public final class SilentAudioKeepAlive {
+    public static let shared = SilentAudioKeepAlive()
+
     private var player: AVAudioPlayer?
     private var wasActive = false
 
-    func start() {
+    public init() {}
+
+    public func start() {
         guard !wasActive else { return }
         do {
             let session = AVAudioSession.sharedInstance()
@@ -23,13 +27,13 @@ final class SilentAudioKeepAlive {
             p.play()
             player = p
             wasActive = true
-            NSLog("[Locus] silent audio keep-alive started")
+            NSLog("[AutoFarm] silent audio keep-alive started")
         } catch {
-            NSLog("[Locus] silent audio keep-alive failed: %@", error.localizedDescription)
+            NSLog("[AutoFarm] silent audio keep-alive failed: %@", error.localizedDescription)
         }
     }
 
-    func stop() {
+    public func stop() {
         player?.stop()
         player = nil
         wasActive = false
@@ -37,7 +41,7 @@ final class SilentAudioKeepAlive {
     }
 
     private static func writeSilentWAV() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("locus-silence.wav")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("autofarm-silence.wav")
         if FileManager.default.fileExists(atPath: url.path) { return url }
 
         let sampleRate: Int = 8000

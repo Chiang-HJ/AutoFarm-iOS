@@ -31,22 +31,27 @@ jobs:
       - name: Generate Xcode Project
         run: xcodegen generate
 
-      - name: Build App Archive (Unsigned)
+      - name: Build App (Unsigned)
         run: |
-          xcodebuild -project AutoFarmGPS.xcodeproj \
+          set -o pipefail
+          xcodebuild \
+            -project AutoFarmGPS.xcodeproj \
             -scheme AutoFarmGPS \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -archivePath build/AutoFarmGPS.xcarchive \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build | tee xcodebuild.log
 
       - name: Package Unsigned IPA
         run: |
           mkdir -p Payload
-          cp -r build/AutoFarmGPS.xcarchive/Products/Applications/AutoFarmGPS.app Payload/
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
+          echo "Found compiled app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
           zip -qr AutoFarm-iOS-unsigned.ipa Payload
           rm -rf Payload
           ls -lh AutoFarm-iOS-unsigned.ipa
@@ -56,4 +61,12 @@ jobs:
         with:
           name: AutoFarm-iOS-unsigned
           path: AutoFarm-iOS-unsigned.ipa
+          retention-days: 7
+
+      - name: Upload Build Log on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-log
+          path: xcodebuild.log
           retention-days: 7

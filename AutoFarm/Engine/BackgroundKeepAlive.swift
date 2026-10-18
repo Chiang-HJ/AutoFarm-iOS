@@ -1,11 +1,13 @@
 import CoreLocation
 import Foundation
 
-final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
-    private(set) var lastKnownCoordinate: CLLocationCoordinate2D?
+public final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
+    public static let shared = BackgroundKeepAlive()
 
-    override init() {
+    private let manager = CLLocationManager()
+    public private(set) var lastKnownCoordinate: CLLocationCoordinate2D?
+
+    public override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
@@ -14,16 +16,16 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
         manager.showsBackgroundLocationIndicator = false
     }
 
-    func start() {
+    public func start() {
         manager.requestAlwaysAuthorization()
         manager.startUpdatingLocation()
     }
 
-    func stop() {
+    public func stop() {
         manager.stopUpdatingLocation()
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         lastKnownCoordinate = locations.last?.coordinate
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import UIKit
 
 public struct MainMapView: UIViewRepresentable {
     @ObservedObject var session = AutoFarmSession.shared

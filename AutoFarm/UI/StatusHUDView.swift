@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 public struct StatusHUDView: View {
     @ObservedObject var session = AutoFarmSession.shared

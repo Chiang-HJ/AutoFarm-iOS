@@ -2,15 +2,16 @@ import Foundation
 import UniformTypeIdentifiers
 import UIKit
 
-@MainActor
-final class PairingStore: ObservableObject {
-    @Published private(set) var hasPairingFile = false
-    @Published var lastError: String?
+public final class PairingStore: ObservableObject {
+    public static let shared = PairingStore()
 
-    static let fileName = "rp_pairing_file.plist"
-    static let supportedTypes: [UTType] = {
+    @Published public private(set) var hasPairingFile = false
+    @Published public var lastError: String?
+
+    public static let fileName = "rp_pairing_file.plist"
+    public static let supportedTypes: [UTType] = {
         var types: [UTType] = [
-            .item,          // anything — sideloaded plists often lack a proper UTI
+            .item,
             .data,
             .propertyList,
             .xml,
@@ -20,33 +21,59 @@ final class PairingStore: ObservableObject {
                 types.append(t)
             }
         }
-        if let custom = UTType("com.chrismack.locus.rppairing") {
+        if let custom = UTType("com.autofarm.rppairing") {
             types.append(custom)
         }
         return types
     }()
 
-    private var directoryURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    public static var directoryURL: URL {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Pairing", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
-    var pairingURL: URL {
-        directoryURL.appendingPathComponent(Self.fileName)
+    public var pairingURL: URL {
+        Self.directoryURL.appendingPathComponent(Self.fileName)
     }
 
-    var pairingPath: String { pairingURL.path }
+    public var pairingPath: String { pairingURL.path }
 
-    init() {
+    public init() {
         refresh()
     }
 
-    func refresh() {
-        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    public func refresh() {
         hasPairingFile = FileManager.default.fileExists(atPath: pairingURL.path)
     }
 
-    func importPairing(from sourceURL: URL) throws {
+    public static func availablePairings() -> [URL] {
+        let dir = directoryURL
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        return files.filter { $0.pathExtension == "plist" || $0.pathExtension == "mobiledevicepairing" || $0.lastPathComponent == fileName }
+    }
+
+    public static func savePairing(from sourceURL: URL) throws -> URL {
+        let accessing = sourceURL.startAccessingSecurityScopedResource()
+        defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        let data = try Data(contentsOf: sourceURL)
+        let destURL = directoryURL.appendingPathComponent(sourceURL.lastPathComponent)
+        try data.write(to: destURL, options: .atomic)
+
+        // 也複製一份為預設 fileName
+        let defaultDest = directoryURL.appendingPathComponent(fileName)
+        try? FileManager.default.removeItem(at: defaultDest)
+        try? data.write(to: defaultDest, options: .atomic)
+
+        shared.refresh()
+        return destURL
+    }
+
+    public func importPairing(from sourceURL: URL) throws {
         let accessing = sourceURL.startAccessingSecurityScopedResource()
         defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
 
@@ -54,8 +81,7 @@ final class PairingStore: ObservableObject {
         try installPairingData(data)
     }
 
-    /// LiveContainer / broken pickers: copy the plist text (or file) then paste here.
-    func importPairingFromClipboard() throws {
+    public func importPairingFromClipboard() throws {
         let board = UIPasteboard.general
 
         if let url = board.url ?? board.urls?.first {
@@ -79,7 +105,7 @@ final class PairingStore: ObservableObject {
         try installPairingData(data)
     }
 
-    func removePairing() throws {
+    public func removePairing() throws {
         if FileManager.default.fileExists(atPath: pairingURL.path) {
             try FileManager.default.removeItem(at: pairingURL)
         }
@@ -91,7 +117,8 @@ final class PairingStore: ObservableObject {
             throw PairingImportError.invalidContents
         }
 
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let dir = Self.directoryURL
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: pairingURL.path) {
             try FileManager.default.removeItem(at: pairingURL)
         }
@@ -105,23 +132,22 @@ final class PairingStore: ObservableObject {
         if let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
             return obj is [AnyHashable: Any] || obj is [Any]
         }
-        // XML plist often starts with these markers when copied as text.
         guard let text = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
         return text.hasPrefix("<?xml") || text.hasPrefix("bplist") || text.contains("<plist")
     }
 }
 
-enum PairingImportError: LocalizedError {
+public enum PairingImportError: LocalizedError {
     case emptyClipboard
     case invalidContents
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .emptyClipboard:
-            return "Clipboard is empty. Copy your RPPairing plist text (or the file), then try Paste again."
+            return "剪貼簿為空。請複製 RPPairing plist 內容後再試一次。"
         case .invalidContents:
-            return "That doesn’t look like an RPPairing plist. Copy the full pairing file contents and try again."
+            return "非有效的 RPPairing plist 憑證檔案。"
         }
     }
 }

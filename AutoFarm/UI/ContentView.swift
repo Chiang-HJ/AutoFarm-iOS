@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreLocation
+import UIKit
 
 public struct ContentView: View {
     @StateObject private var session = AutoFarmSession.shared

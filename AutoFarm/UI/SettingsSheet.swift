@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct SettingsSheet: View {
     @ObservedObject var session = AutoFarmSession.shared
+    @ObservedObject var pairingMgr = RemotePairingManager.shared
     @Environment(\.dismiss) var dismiss
 
     @State private var isTesting: Bool = false
@@ -13,6 +14,51 @@ public struct SettingsSheet: View {
     public var body: some View {
         NavigationView {
             Form {
+                Section(header: Text("手機免電腦配對認證 (解決 Connection Reset 54)")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button(action: {
+                            pairingMgr.startPairing()
+                        }) {
+                            HStack {
+                                Image(systemName: "key.fill")
+                                Text(pairingMgr.isPairing ? "正在等待系統配對..." : "開始手機配對 (生成 6 位數碼)")
+                                    .fontWeight(.bold)
+                                Spacer()
+                                if pairingMgr.isPairing {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(pairingMgr.isPairing)
+
+                        if let pin = pairingMgr.pairingPin {
+                            VStack(spacing: 4) {
+                                Text("一次性配對驗證碼")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                Text(pin)
+                                    .font(.system(size: 32, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(.blue)
+                                    .tracking(6)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(Color.blue.opacity(0.08))
+                            .cornerRadius(10)
+                        }
+
+                        if let status = pairingMgr.statusMessage {
+                            Text(status)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(pairingMgr.isSuccess ? .green : (pairingMgr.isPairing ? .orange : .red))
+                        }
+
+                        Text("配對流程（只需做一次，永久信任）：\n1. 確認手機連上 Wi-Fi，且已開啟「開發者模式」。\n2. 點擊【開始手機配對】，記下畫面上的 6 位數配對碼。\n3. 前往 iPhone「設定 → 隱私權與安全性 → 開發者模式」，點選 AutoFarm 並輸入這組配對碼。\n4. 配對完成後回到 AutoFarm，再點下方【測試通道握手】即可順暢連線！")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 Section(header: Text("本機迴圈通道 (LocalDevVPN)")) {
                     HStack {
                         Text("Tunnel IP")
@@ -49,24 +95,8 @@ public struct SettingsSheet: View {
                         .foregroundColor(.secondary)
                 }
 
-                Section(header: Text("調試憑證狀態")) {
-                    HStack {
-                        Image(systemName: "checkmark.shield.fill")
-                            .foregroundColor(.green)
-                        Text("免電腦本機 RemotePairing 金鑰")
-                            .font(.system(size: 13, weight: .medium))
-                        Spacer()
-                        Text("已就緒")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                    }
-                    Text("本版已全面在系統底層自動管理調試金鑰，免除手動匯入或從電腦複製 plist 的困擾。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
                 Section(header: Text("免越獄使用說明")) {
-                    Text("1. iPhone 必須開啟「開發者模式」（設定 → 隱私權與安全性 → 最下方開發者模式）。\n2. 連接 LocalDevVPN (10.7.0.1) 本機迴圈。\n3. 通道握手完成後，即可隨時在單機獨立修改系統定位與巡航。")
+                    Text("1. iPhone 必須開啟「開發者模式」（設定 → 隱私權與安全性 → 最下方開發者模式）。\n2. 連接 LocalDevVPN (10.7.1.1) 本機迴圈。\n3. 通道握手完成後，即可隨時在單機獨立修改系統定位與巡航。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

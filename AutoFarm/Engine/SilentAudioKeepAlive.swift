@@ -3,11 +3,15 @@ import Foundation
 
 /// Plays near-silent audio so iOS keeps Locus runnable (and able to accept
 /// TCP) while the user is in Settings › Developer Mode.
-final class SilentAudioKeepAlive {
+public final class SilentAudioKeepAlive {
+    public static let shared = SilentAudioKeepAlive()
+
     private var player: AVAudioPlayer?
     private var wasActive = false
 
-    func start() {
+    public init() {}
+
+    public func start() {
         guard !wasActive else { return }
         do {
             let session = AVAudioSession.sharedInstance()
@@ -29,7 +33,7 @@ final class SilentAudioKeepAlive {
         }
     }
 
-    func stop() {
+    public func stop() {
         player?.stop()
         player = nil
         wasActive = false

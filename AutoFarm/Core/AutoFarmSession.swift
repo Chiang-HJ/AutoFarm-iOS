@@ -677,7 +677,7 @@ public final class AutoFarmSession: ObservableObject {
         }
     }
 
-    /// 借鏡 FreeWay: 握手並準備連線 (用於在 4G/Wi-Fi 下預先驗證通道)
+    /// 握手並準備連線 (用於在 4G/Wi-Fi 下預先驗證通道)
     public func prepareConnection() {
         showToast("正在建立調試通道握手...")
         let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath

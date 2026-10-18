@@ -27,6 +27,7 @@ jobs:
 
       - name: Build Unsigned App with xcodebuild
         run: |
+          set -o pipefail
           xcodebuild build \
             -project AutoFarmGPS.xcodeproj \
             -scheme AutoFarmGPS \
@@ -36,7 +37,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            SYMROOT=$PWD/build
+            SYMROOT=$PWD/build 2>&1 | tee build.log || (echo "=== BUILD ERROR SUMMARY ===" && grep -C 3 -i "error:" build.log && exit 1)
 
       - name: Package into IPA
         run: |

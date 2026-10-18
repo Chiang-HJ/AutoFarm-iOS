@@ -61,16 +61,28 @@ public struct ControlDrawerView: View {
                 // 開始 / 暫停按鈕
                 Button(action: {
                     if session.routePoints.isEmpty {
-                        // 範例啟動或提示使用者
-                        session.startLinearRoute(
-                            name: "當前巡航",
-                            basePoints: [
+                        let basePoints: [RouteNode]
+                        let name: String
+                        if let first = SavedDatabaseStore.shared.savedRoutes.first {
+                            name = first.name
+                            basePoints = first.nodes
+                        } else {
+                            name = "預設巡航"
+                            basePoints = [
                                 RouteNode(lat: session.currentLat, lng: session.currentLng),
                                 RouteNode(lat: session.currentLat + 0.002, lng: session.currentLng + 0.002)
-                            ],
-                            loops: Int(loopsInput) ?? 0,
-                            mode: session.loopMode
-                        )
+                            ]
+                        }
+                        switch selectedTab {
+                        case 1:
+                            session.startFlowerRoute(name: name, basePoints: basePoints, loops: Int(loopsInput) ?? 0, settings: session.flowerSettings)
+                        case 2:
+                            session.startFruitRoute(name: name, basePoints: basePoints, loops: Int(loopsInput) ?? 0, walkDistance: Double(fruitDistInput) ?? 80.0)
+                        case 3:
+                            session.startConcentricFlower(centerLat: session.currentLat, centerLng: session.currentLng, radius: Double(concentricRadiusInput) ?? 30.0, step: Double(concentricStepInput) ?? 10.0, mode: concentricMode)
+                        default:
+                            session.startLinearRoute(name: name, basePoints: basePoints, loops: Int(loopsInput) ?? 0, mode: session.loopMode)
+                        }
                     } else {
                         session.toggleRoutePause()
                     }

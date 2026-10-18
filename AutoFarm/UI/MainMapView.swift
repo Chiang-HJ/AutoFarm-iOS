@@ -6,13 +6,16 @@ public struct MainMapView: UIViewRepresentable {
     @ObservedObject var session = AutoFarmSession.shared
     var onLongPress: ((CLLocationCoordinate2D) -> Void)?
     var onSelectWaypoint: ((Int) -> Void)?
+    var onTapCurrentLocation: (() -> Void)?
 
     public init(
         onLongPress: ((CLLocationCoordinate2D) -> Void)? = nil,
-        onSelectWaypoint: ((Int) -> Void)? = nil
+        onSelectWaypoint: ((Int) -> Void)? = nil,
+        onTapCurrentLocation: (() -> Void)? = nil
     ) {
         self.onLongPress = onLongPress
         self.onSelectWaypoint = onSelectWaypoint
+        self.onTapCurrentLocation = onTapCurrentLocation
     }
 
     public func makeUIView(context: Context) -> MKMapView {
@@ -103,6 +106,13 @@ public struct MainMapView: UIViewRepresentable {
             view?.markerTintColor = .systemRed
             view?.glyphImage = UIImage(systemName: "figure.walk")
             return view
+        }
+
+        public func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            if view.annotation is MKPointAnnotation {
+                mapView.deselectAnnotation(view.annotation, animated: false)
+                parent.onTapCurrentLocation?()
+            }
         }
     }
 }

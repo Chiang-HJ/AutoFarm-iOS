@@ -229,12 +229,12 @@ public struct RouteModeConfigSheet: View {
         savePreferences()
 
         let flowerConfig = MultiFlowerSettings(
-            enableCircle2: enableCircle2,
-            circle1: FlowerCircleParam(radius: circle1Radius, loops: circle1Loops, waitBeforeSec: circle1WaitBefore, waitAfterSec: circle1WaitAfter),
-            circle2: FlowerCircleParam(radius: circle2Radius, loops: circle2Loops, waitBeforeSec: circle2WaitBefore, waitAfterSec: circle2WaitAfter),
             flowerTeleport: flowerTeleport,
+            enableCircle2: enableCircle2,
             flowerJitter: flowerJitter,
-            flowerAlternate: flowerAlternate
+            flowerAlternate: flowerAlternate,
+            circle1: FlowerCircleParam(radius: circle1Radius, loops: circle1Loops, waitBeforeSec: circle1WaitBefore, waitAfterSec: circle1WaitAfter),
+            circle2: FlowerCircleParam(radius: circle2Radius, loops: circle2Loops, waitBeforeSec: circle2WaitBefore, waitAfterSec: circle2WaitAfter)
         )
 
         let targetLoops = (selectedMode == 0) ? linearLoops : (selectedMode == 1 ? 0 : fruitLoops)

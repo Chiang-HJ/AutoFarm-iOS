@@ -56,7 +56,7 @@ public struct ControlDrawerView: View {
             if !session.routePoints.isEmpty {
                 activeRouteControlCard
             } else {
-                // 平時待命時的獨立速度調整區塊
+                // 平時待命時的獨立速度調整區塊 (純輸入框，支援收起鍵盤，無快捷鍵)
                 idleSpeedControlSection
             }
 
@@ -145,7 +145,10 @@ public struct ControlDrawerView: View {
                 Spacer()
 
                 // 設定按鈕
-                Button(action: onOpenSettings) {
+                Button(action: {
+                    hideKeyboard()
+                    onOpenSettings()
+                }) {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
@@ -156,6 +159,7 @@ public struct ControlDrawerView: View {
 
                 // 展開 / 收合切換
                 Button(action: {
+                    hideKeyboard()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         isExpanded.toggle()
                     }
@@ -172,7 +176,7 @@ public struct ControlDrawerView: View {
         }
     }
 
-    // MARK: - 平時待命時的獨立速度調整區塊
+    // MARK: - 平時待命時的獨立速度調整區塊 (純文字輸入框，支援收起鍵盤，已移除快捷鍵)
     private var idleSpeedControlSection: some View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
@@ -187,12 +191,12 @@ public struct ControlDrawerView: View {
             HStack(spacing: 4) {
                 TextField("18.0", text: $speedInputText, onCommit: commitSpeedInput)
                     .keyboardType(.decimalPad)
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
                     .multilineTextAlignment(.center)
-                    .frame(width: 60)
-                    .padding(.vertical, 4)
+                    .frame(width: 75)
+                    .padding(.vertical, 5)
                     .background(Color(UIColor.tertiarySystemBackground))
-                    .cornerRadius(6)
+                    .cornerRadius(8)
 
                 Text("km/h")
                     .font(.system(size: 12))
@@ -201,34 +205,29 @@ public struct ControlDrawerView: View {
 
             Spacer()
 
-            // 常用時速快捷切換
-            HStack(spacing: 6) {
-                speedQuickButton(value: 9.0, label: "9")
-                speedQuickButton(value: 18.0, label: "18")
-                speedQuickButton(value: 24.0, label: "24")
-                speedQuickButton(value: 36.0, label: "36")
+            // 鍵盤完成收起按鈕
+            Button(action: {
+                commitSpeedInput()
+                hideKeyboard()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("完成")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(8)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color(UIColor.secondarySystemBackground).opacity(0.8))
+        .background(Color(UIColor.secondarySystemBackground).opacity(0.85))
         .cornerRadius(12)
         .padding(.horizontal, 16)
-    }
-
-    private func speedQuickButton(value: Double, label: String) -> some View {
-        Button(action: {
-            session.speedKmh = value
-            speedInputText = String(format: "%.0f", value)
-        }) {
-            Text(label)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(abs(session.speedKmh - value) < 0.1 ? .white : .primary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(abs(session.speedKmh - value) < 0.1 ? Color.blue : Color(UIColor.tertiarySystemBackground))
-                .cornerRadius(6)
-        }
     }
 
     private func commitSpeedInput() {
@@ -258,26 +257,43 @@ public struct ControlDrawerView: View {
                             .foregroundColor(session.isRoutePaused ? .orange : .green)
                     }
 
-                    Text("航點 \(session.currentRouteIndex + 1)/\(session.routePoints.count) | 循環第 \(session.routeCurrentLoop + 1) 圈 | 預計 \(session.etaString)")
+                    let currentDisp = session.currentDisplayIndex + 1
+                    let totalDisp = session.displayWaypoints.count
+                    let labelType = (session.executionMode == 1) ? "花苞" : "航點"
+
+                    Text("\(labelType) \(currentDisp)/\(totalDisp) | 循環第 \(session.routeCurrentLoop + 1) 圈 | 預計 \(session.etaString)")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
 
-                // 即時時速輸入框
-                HStack(spacing: 3) {
-                    TextField("18", text: $speedInputText, onCommit: commitSpeedInput)
-                        .keyboardType(.decimalPad)
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 48)
-                        .padding(.vertical, 3)
-                        .background(Color(UIColor.tertiarySystemBackground))
-                        .cornerRadius(6)
+                // 即時時速輸入框與完成收鍵盤按鈕
+                HStack(spacing: 4) {
+                    TextField("18", text: $speedInputText, onCommit: {
+                        commitSpeedInput()
+                        hideKeyboard()
+                    })
+                    .keyboardType(.decimalPad)
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 50)
+                    .padding(.vertical, 3)
+                    .background(Color(UIColor.tertiarySystemBackground))
+                    .cornerRadius(6)
+
                     Text("km/h")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
+
+                    Button(action: {
+                        commitSpeedInput()
+                        hideKeyboard()
+                    }) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.blue)
+                    }
                 }
             }
 
@@ -287,7 +303,10 @@ public struct ControlDrawerView: View {
             // 第一排：暫停/繼續、上一點、下一點、路線中心、暫存進度
             HStack(spacing: 8) {
                 // 暫停 / 繼續
-                Button(action: { session.toggleRoutePause() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.toggleRoutePause()
+                }) {
                     VStack(spacing: 3) {
                         Image(systemName: session.isRoutePaused ? "play.fill" : "pause.fill")
                             .font(.system(size: 15))
@@ -302,7 +321,10 @@ public struct ControlDrawerView: View {
                 }
 
                 // 上一點
-                Button(action: { session.prevRoutePoint() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.prevRoutePoint()
+                }) {
                     VStack(spacing: 3) {
                         Image(systemName: "backward.end.fill")
                             .font(.system(size: 14))
@@ -317,7 +339,10 @@ public struct ControlDrawerView: View {
                 }
 
                 // 下一點
-                Button(action: { session.nextRoutePoint() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.nextRoutePoint()
+                }) {
                     VStack(spacing: 3) {
                         Image(systemName: "forward.end.fill")
                             .font(.system(size: 14))
@@ -332,7 +357,10 @@ public struct ControlDrawerView: View {
                 }
 
                 // 路線中心 (自動暫停並瞬移中心)
-                Button(action: { session.centerOnRoute() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.centerOnRoute()
+                }) {
                     VStack(spacing: 3) {
                         Image(systemName: "scope")
                             .font(.system(size: 14))
@@ -347,7 +375,10 @@ public struct ControlDrawerView: View {
                 }
 
                 // 暫存進度
-                Button(action: { session.saveProgress() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.saveProgress()
+                }) {
                     VStack(spacing: 3) {
                         Image(systemName: "square.and.arrow.down.fill")
                             .font(.system(size: 14))
@@ -365,7 +396,10 @@ public struct ControlDrawerView: View {
             // 第二排：路線全覽、分享路線、停止路線、恢復真實GPS
             HStack(spacing: 8) {
                 // 路線全覽
-                Button(action: { session.fitCameraToRouteBounds() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.fitCameraToRouteBounds()
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                             .font(.system(size: 12))
@@ -381,6 +415,7 @@ public struct ControlDrawerView: View {
 
                 // 分享路線
                 Button(action: {
+                    hideKeyboard()
                     if let saved = db.savedRoutes.first(where: { $0.name == session.activeRouteName }) {
                         self.routeToShare = saved
                     } else {
@@ -402,7 +437,10 @@ public struct ControlDrawerView: View {
                 }
 
                 // 停止路線 (保留當前虛擬位置)
-                Button(action: { session.stopRoute() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.stopRoute()
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 12))
@@ -417,7 +455,10 @@ public struct ControlDrawerView: View {
                 }
 
                 // 恢復真實 GPS (重置 locationd)
-                Button(action: { session.stopMocking() }) {
+                Button(action: {
+                    hideKeyboard()
+                    session.stopMocking()
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "location.slash.fill")
                             .font(.system(size: 12))
@@ -445,6 +486,7 @@ public struct ControlDrawerView: View {
             HStack(spacing: 8) {
                 // 儲存目前位置快捷鍵
                 Button(action: {
+                    hideKeyboard()
                     let lat = session.currentLat
                     let lng = session.currentLng
                     db.addLocation(name: "目前位置 \(db.savedLocations.count + 1)", latitude: lat, longitude: lng)
@@ -464,6 +506,7 @@ public struct ControlDrawerView: View {
 
                 // 自訂經緯度
                 Button(action: {
+                    hideKeyboard()
                     newLocName = ""
                     newLocLat = String(format: "%.6f", session.currentLat)
                     newLocLng = String(format: "%.6f", session.currentLng)
@@ -495,6 +538,7 @@ public struct ControlDrawerView: View {
                         ForEach(db.savedLocations) { loc in
                             HStack {
                                 Button(action: {
+                                    hideKeyboard()
                                     handleLocationClick(loc)
                                 }) {
                                     HStack(spacing: 10) {
@@ -522,6 +566,7 @@ public struct ControlDrawerView: View {
                                 }
 
                                 Button(action: {
+                                    hideKeyboard()
                                     db.deleteLocation(id: loc.id)
                                 }) {
                                     Image(systemName: "trash")
@@ -549,7 +594,10 @@ public struct ControlDrawerView: View {
             // 檔案與文字匯入列
             HStack(spacing: 8) {
                 // 1. 匯入檔案 (GPX / CSV / TXT)
-                Button(action: { isFileImporterPresented = true }) {
+                Button(action: {
+                    hideKeyboard()
+                    isFileImporterPresented = true
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "square.and.arrow.down.fill")
                         Text("匯入檔案 (GPX/CSV/TXT)")
@@ -564,6 +612,7 @@ public struct ControlDrawerView: View {
 
                 // 2. 貼上文字匯入
                 Button(action: {
+                    hideKeyboard()
                     pasteRouteName = ""
                     pasteCoordinatesText = ""
                     isPasteImportPresented = true
@@ -595,6 +644,7 @@ public struct ControlDrawerView: View {
                             HStack {
                                 // 路線點擊設定模式
                                 Button(action: {
+                                    hideKeyboard()
                                     handleRouteClick(route)
                                 }) {
                                     HStack(spacing: 10) {
@@ -623,6 +673,7 @@ public struct ControlDrawerView: View {
 
                                 // 路線專屬分享按鈕
                                 Button(action: {
+                                    hideKeyboard()
                                     self.routeToShare = route
                                     self.isRouteSharePresented = true
                                 }) {
@@ -634,6 +685,7 @@ public struct ControlDrawerView: View {
 
                                 // 刪除按鈕
                                 Button(action: {
+                                    hideKeyboard()
                                     db.deleteRoute(id: route.id)
                                 }) {
                                     Image(systemName: "trash")
@@ -823,20 +875,9 @@ public struct ControlDrawerView: View {
     }
 }
 
-/// 單一路線原生分享 Sheet
-public struct SingleRouteShareSheet: UIViewControllerRepresentable {
-    public let route: SavedRoute
-
-    public init(route: SavedRoute) {
-        self.route = route
+/// 全域收起鍵盤擴展
+extension View {
+    public func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
-
-    public func makeUIViewController(context: Context) -> UIActivityViewController {
-        let content = route.nodes.map { "\($0.lat), \($0.lng)" }.joined(separator: "\n")
-        let item = "【\(route.name)】路徑座標點位：\n\(content)"
-        let av = UIActivityViewController(activityItems: [item], applicationActivities: nil)
-        return av
-    }
-
-    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

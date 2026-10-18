@@ -17,6 +17,9 @@ public struct ContentView: View {
     @State private var isSavingCoordNamePrompt: Bool = false
     @State private var saveCoordNameInput: String = ""
 
+    // 點選地圖數字球選定之航點索引 (對齊安卓：從此點出發 / 瞬移 / 複製)
+    @State private var selectedWaypointIndex: Int? = nil
+
     // 自由拖曳虛擬搖桿開關位置
     @State private var joystickPositionOffset: CGSize = .zero
     @GestureState private var joystickDragOffset: CGSize = .zero
@@ -28,21 +31,33 @@ public struct ContentView: View {
             // 1. 全螢幕互動地圖
             MainMapView(
                 onLongPress: { coord in
+                    hideKeyboard()
                     self.saveCoordNameInput = ""
                     self.isSavingCoordNamePrompt = false
+                    self.selectedWaypointIndex = nil
                     self.selectedSingleCoord = coord
                 },
+                onSelectWaypoint: { index in
+                    hideKeyboard()
+                    self.selectedSingleCoord = nil
+                    self.selectedWaypointIndex = index
+                },
                 onTapCurrentLocation: {
+                    hideKeyboard()
                     self.saveCoordNameInput = ""
                     self.isSavingCoordNamePrompt = false
+                    self.selectedWaypointIndex = nil
                     self.selectedSingleCoord = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
                 }
             )
             .edgesIgnoringSafeArea(.all)
+            .onTapGesture {
+                hideKeyboard()
+            }
 
             // 2. 主介面浮層
             VStack(spacing: 0) {
-                // 頂部多功能精簡工具列 (待命狀態乾淨俐落)
+                // 頂部多功能工具列
                 topActionBar
                     .padding(.horizontal, 12)
                     .padding(.top, 44) // 避開 Dynamic Island / 狀態列
@@ -57,8 +72,9 @@ public struct ContentView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: 12) {
-                        // 視角平滑置中至目前定位 (相機順移回角色當前位置)
+                        // 視角置中目前定位
                         Button(action: {
+                            hideKeyboard()
                             session.centerCameraOnCurrentLocation()
                         }) {
                             Image(systemName: "location.fill")
@@ -72,8 +88,10 @@ public struct ContentView: View {
 
                         // 目前位置單點選單
                         Button(action: {
+                            hideKeyboard()
                             self.saveCoordNameInput = ""
                             self.isSavingCoordNamePrompt = false
+                            self.selectedWaypointIndex = nil
                             self.selectedSingleCoord = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
                         }) {
                             Image(systemName: "mappin.and.ellipse")
@@ -89,7 +107,7 @@ public struct ContentView: View {
                     .padding(.bottom, 10)
                 }
 
-                // 底部控制抽屜 (平時待命速度設定 + 資料庫；運行時平移安卓懸浮球)
+                // 底部控制抽屜
                 ControlDrawerView(
                     onOpenShare: { isSharePresented = true },
                     onOpenSettings: { isSettingsPresented = true }
@@ -97,15 +115,20 @@ public struct ContentView: View {
             }
             .edgesIgnoringSafeArea(.bottom)
 
-            // 3. 可全螢幕任意自由拖曳位置的虛擬搖桿開關與方向盤
+            // 3. 可自由拖曳的虛擬方向盤與開關
             draggableJoystickView
 
-            // 4. 單點多功能互動卡片 (長按或點選目前位置)
+            // 4. 點選地圖數字球操作浮動卡片 (對齊安卓：從此點開始運行、瞬移、複製)
+            if let wpIdx = selectedWaypointIndex {
+                waypointActionOverlay(index: wpIdx)
+            }
+
+            // 5. 單點多功能互動卡片 (長按或點選目前位置)
             if let coord = selectedSingleCoord {
                 singlePointActionOverlay(coord: coord)
             }
 
-            // 5. 啟動時偵測到未完成進度之提示視窗
+            // 6. 啟動時偵測到未完成進度之提示視窗 (自動讀取意外中斷前最新保存之路線)
             if let resume = pendingResumeProgress {
                 Color.black.opacity(0.4).edgesIgnoringSafeArea(.all)
                 ResumeProgressSheet(
@@ -138,54 +161,153 @@ public struct ContentView: View {
         }
     }
 
+    // MARK: - 點選地圖數字球操作卡片 (對齊安卓)
+    @ViewBuilder
+    private func waypointActionOverlay(index: Int) -> some View {
+        let waypoints = session.displayWaypoints
+        if index >= 0 && index < waypoints.count {
+            let node = waypoints[index]
+            let isFlower = (session.executionMode == 1)
+            let pointTitle = isFlower ? "花苞 #\(index + 1)" : "航點 #\(index + 1)"
+
+            Color.black.opacity(0.35)
+                .edgesIgnoringSafeArea(.all)
+                .onTapGesture {
+                    selectedWaypointIndex = nil
+                }
+
+            VStack(spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(pointTitle)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.primary)
+                        Text("\(String(format: "%.6f", node.lat)), \(String(format: "%.6f", node.lng))")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { selectedWaypointIndex = nil }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 20))
+                    }
+                }
+
+                Divider()
+
+                VStack(spacing: 8) {
+                    // 1. 從此點開始運行 (跳轉至此點)
+                    Button(action: {
+                        session.jumpToWaypoint(index: index)
+                        selectedWaypointIndex = nil
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 16))
+                            Text("從此點開始運行 (跳至此航點)")
+                                .font(.system(size: 13, weight: .bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+
+                    HStack(spacing: 8) {
+                        // 2. 瞬移到此點
+                        Button(action: {
+                            session.teleport(to: node.lat, lng: node.lng)
+                            selectedWaypointIndex = nil
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.fill")
+                                Text("瞬移到此點")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                        }
+
+                        // 3. 複製座標
+                        Button(action: {
+                            UIPasteboard.general.string = "\(String(format: "%.6f", node.lat)), \(String(format: "%.6f", node.lng))"
+                            session.toastMessage = "已複製航點座標"
+                            selectedWaypointIndex = nil
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "doc.on.doc.fill")
+                                Text("複製座標")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .foregroundColor(.primary)
+                            .cornerRadius(10)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .background(Color(UIColor.systemBackground))
+            .cornerRadius(16)
+            .shadow(radius: 12)
+            .padding(.horizontal, 24)
+        }
+    }
+
     // MARK: - 可自由拖曳位置的虛擬搖桿組件
     private var draggableJoystickView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if session.isJoystickEnabled {
                 VirtualJoystickView()
                     .transition(.scale.combined(with: .opacity))
-            }
-
-            // 獨立搖桿開關按鈕 (支援全螢幕拖曳)
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                    session.isJoystickEnabled.toggle()
-                }
-            }) {
-                HStack(spacing: 5) {
-                    Image(systemName: session.isJoystickEnabled ? "gamecontroller.fill" : "gamecontroller")
-                        .font(.system(size: 18))
-                    if !session.isJoystickEnabled {
+            } else {
+                // 獨立搖桿開關按鈕 (支援全螢幕任意拖動)
+                Button(action: {
+                    hideKeyboard()
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        session.isJoystickEnabled = true
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "gamecontroller.fill")
+                            .font(.system(size: 18))
                         Text("搖桿")
                             .font(.system(size: 11, weight: .bold))
                     }
+                    .foregroundColor(.white)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .padding(.horizontal, 10)
+                    .background(Color.blue)
+                    .clipShape(Capsule())
+                    .shadow(color: Color.black.opacity(0.25), radius: 5, x: 0, y: 2)
                 }
-                .foregroundColor(session.isJoystickEnabled ? .white : .blue)
-                .frame(minWidth: 44, minHeight: 44)
-                .padding(.horizontal, session.isJoystickEnabled ? 0 : 8)
-                .background(session.isJoystickEnabled ? Color.blue : Color(UIColor.secondarySystemBackground).opacity(0.92))
-                .clipShape(Capsule())
-                .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 2)
             }
-            .gesture(
-                DragGesture()
-                    .updating($joystickDragOffset) { value, state, _ in
-                        state = value.translation
-                    }
-                    .onEnded { value in
-                        joystickPositionOffset.width += value.translation.width
-                        joystickPositionOffset.height += value.translation.height
-                    }
-            )
         }
+        .gesture(
+            DragGesture()
+                .updating($joystickDragOffset) { value, state, _ in
+                    state = value.translation
+                }
+                .onEnded { value in
+                    joystickPositionOffset.width += value.translation.width
+                    joystickPositionOffset.height += value.translation.height
+                }
+        )
         .offset(
             x: joystickPositionOffset.width + joystickDragOffset.width,
             y: joystickPositionOffset.height + joystickDragOffset.height
         )
-        .position(x: 70, y: 550)
+        .position(x: 75, y: 530)
     }
 
-    // MARK: - 頂部工具列 (平時待命狀態專用，保持乾淨)
+    // MARK: - 頂部工具列
     private var topActionBar: some View {
         HStack(spacing: 8) {
             // 座標與搜尋輸入
@@ -210,13 +332,16 @@ public struct ContentView: View {
             .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
             .cornerRadius(12)
 
-            // DVT 連線就緒指示燈
+            // DVT 連線指示燈
             Circle()
                 .fill(session.isSimulatingLocation ? Color.blue : Color.green)
                 .frame(width: 10, height: 10)
 
             // 座標與路徑資料庫
-            Button(action: { isDatabasePresented = true }) {
+            Button(action: {
+                hideKeyboard()
+                isDatabasePresented = true
+            }) {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.blue)
@@ -226,7 +351,10 @@ public struct ContentView: View {
             }
 
             // 連線與憑證設定
-            Button(action: { isSettingsPresented = true }) {
+            Button(action: {
+                hideKeyboard()
+                isSettingsPresented = true
+            }) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 14))
                     .foregroundColor(.primary)
@@ -395,6 +523,7 @@ public struct ContentView: View {
     }
 
     private func handleCoordinateSearch() {
+        hideKeyboard()
         let cleaned = searchInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.contains(",") {
             let parts = cleaned.split(separator: ",")

@@ -48,9 +48,10 @@ public struct MainMapView: UIViewRepresentable {
         // 2. 相機路線全覽
         if session.cameraRouteBoundsTrigger != context.coordinator.lastCameraRouteBoundsTrigger {
             context.coordinator.lastCameraRouteBoundsTrigger = session.cameraRouteBoundsTrigger
-            if !session.routePoints.isEmpty {
+            let pointsToFit = !session.originalBasePoints.isEmpty ? session.originalBasePoints : session.routePoints
+            if !pointsToFit.isEmpty {
                 var zoomRect = MKMapRect.null
-                for node in session.routePoints {
+                for node in pointsToFit {
                     let point = MKMapPoint(CLLocationCoordinate2D(latitude: node.lat, longitude: node.lng))
                     let pointRect = MKMapRect(x: point.x, y: point.y, width: 0.1, height: 0.1)
                     zoomRect = zoomRect.union(pointRect)
@@ -60,7 +61,7 @@ public struct MainMapView: UIViewRepresentable {
             }
         }
 
-        // 3. 更新目前位置標記 (Simulated Character Pin)
+        // 3. 更新目前位置標記 (角色圖示)
         let currentCoord = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
         if let currentAnno = context.coordinator.currentLocationAnnotation {
             UIView.animate(withDuration: 0.1) {
@@ -74,49 +75,62 @@ public struct MainMapView: UIViewRepresentable {
             context.coordinator.currentLocationAnnotation = anno
         }
 
-        // 4. 更新航點數字球標記 (對齊安卓：起點綠色1號、沿途藍色數字、當前目標橙黃色高亮)
-        let currentRouteCount = session.routePoints.count
-        let currentIndex = session.currentRouteIndex
-        if context.coordinator.cachedRouteCount != currentRouteCount ||
+        // 4. 更新航點數字球標記 (完全對齊安卓：只標記基準點/花苞，絕不標記數千個微小步進點)
+        let waypoints = session.displayWaypoints
+        let displayCount = waypoints.count
+        let currentDisplayIdx = session.currentDisplayIndex
+
+        if context.coordinator.cachedRouteCount != displayCount ||
            context.coordinator.cachedRouteName != session.activeRouteName ||
-           context.coordinator.cachedCurrentIndex != currentIndex {
+           context.coordinator.cachedCurrentIndex != currentDisplayIdx {
             
-            context.coordinator.cachedRouteCount = currentRouteCount
+            context.coordinator.cachedRouteCount = displayCount
             context.coordinator.cachedRouteName = session.activeRouteName
-            context.coordinator.cachedCurrentIndex = currentIndex
+            context.coordinator.cachedCurrentIndex = currentDisplayIdx
 
             // 移除舊航點標記
             let oldWaypoints = mapView.annotations.filter { $0 is WaypointAnnotation }
             mapView.removeAnnotations(oldWaypoints)
 
-            if currentRouteCount > 0 {
-                // 如果點數極多(如超過200點)，適度精簡展示以維護流暢度，但起點與目標點必保留
-                let step = currentRouteCount > 200 ? max(1, currentRouteCount / 100) : 1
+            if displayCount > 0 {
                 var newAnnotations: [WaypointAnnotation] = []
-
-                for i in 0..<currentRouteCount {
-                    let isTarget = (i == currentIndex)
+                for i in 0..<displayCount {
+                    let node = waypoints[i]
+                    let isTarget = (i == currentDisplayIdx)
                     let isStart = (i == 0)
-                    if isStart || isTarget || (i % step == 0) || (i == currentRouteCount - 1) {
-                        let node = session.routePoints[i]
-                        let anno = WaypointAnnotation(
-                            coordinate: CLLocationCoordinate2D(latitude: node.lat, longitude: node.lng),
-                            index: i,
-                            isTarget: isTarget,
-                            isStart: isStart,
-                            label: node.label
-                        )
-                        newAnnotations.append(anno)
-                    }
+                    let anno = WaypointAnnotation(
+                        coordinate: CLLocationCoordinate2D(latitude: node.lat, longitude: node.lng),
+                        index: i,
+                        isTarget: isTarget,
+                        isStart: isStart,
+                        label: node.label,
+                        isFlower: (session.executionMode == 1)
+                    )
+                    newAnnotations.append(anno)
                 }
                 mapView.addAnnotations(newAnnotations)
             }
         }
 
-        // 5. 更新路線連線軌跡 (Polyline)
+        // 5. 更新連線軌跡與種花範圍圓圈
         mapView.removeOverlays(mapView.overlays)
+
+        // 種花模式：在當前目標花苞周圍繪製 28m / 24m 圓形覆蓋層
+        if session.executionMode == 1 && displayCount > 0 && currentDisplayIdx < displayCount {
+            let currentFlower = waypoints[currentDisplayIdx]
+            let centerCoord = CLLocationCoordinate2D(latitude: currentFlower.lat, longitude: currentFlower.lng)
+            let circle28 = MKCircle(center: centerCoord, radius: 28.0)
+            let circle24 = MKCircle(center: centerCoord, radius: 24.0)
+            mapView.addOverlays([circle28, circle24])
+        }
+
+        // 航點連線 (多點連線)
         if session.routePoints.count > 1 {
             let coords = session.routePoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+            let polyline = MKPolyline(coordinates: coords, count: coords.count)
+            mapView.addOverlay(polyline)
+        } else if displayCount > 1 {
+            let coords = waypoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
             let polyline = MKPolyline(coordinates: coords, count: coords.count)
             mapView.addOverlay(polyline)
         }
@@ -150,20 +164,32 @@ public struct MainMapView: UIViewRepresentable {
             if let polyline = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = UIColor.systemBlue
-                renderer.lineWidth = 4.0
+                renderer.lineWidth = 3.5
+                return renderer
+            } else if let circle = overlay as? MKCircle {
+                let renderer = MKCircleRenderer(circle: circle)
+                if circle.radius >= 26.0 {
+                    renderer.fillColor = UIColor.systemGreen.withAlphaComponent(0.12)
+                    renderer.strokeColor = UIColor.systemGreen.withAlphaComponent(0.6)
+                    renderer.lineWidth = 1.5
+                } else {
+                    renderer.fillColor = UIColor.systemOrange.withAlphaComponent(0.08)
+                    renderer.strokeColor = UIColor.systemOrange.withAlphaComponent(0.6)
+                    renderer.lineWidth = 1.5
+                }
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
         }
 
         public func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            // 角色當前位置標記
+            // 角色目前位置標記
             if let pointAnno = annotation as? MKPointAnnotation, pointAnno == currentLocationAnnotation {
                 let identifier = "CurrentSimulatedLocation"
                 var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
                 if view == nil {
                     view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                    view?.canShowCallout = true
+                    view?.canShowCallout = false
                 } else {
                     view?.annotation = annotation
                 }
@@ -173,13 +199,13 @@ public struct MainMapView: UIViewRepresentable {
                 return view
             }
 
-            // 航點數字球 (對齊安卓版本)
+            // 航點數字球 (對齊安卓：花苞或航點編號 1, 2, 3...)
             if let wp = annotation as? WaypointAnnotation {
                 let identifier = "WaypointAnnotationMarker"
                 var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
                 if view == nil {
                     view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                    view?.canShowCallout = true
+                    view?.canShowCallout = false
                 } else {
                     view?.annotation = annotation
                 }
@@ -222,17 +248,25 @@ public class WaypointAnnotation: NSObject, MKAnnotation {
     public let title: String?
     public let subtitle: String?
 
-    public init(coordinate: CLLocationCoordinate2D, index: Int, isTarget: Bool, isStart: Bool, label: String? = nil) {
+    public init(coordinate: CLLocationCoordinate2D, index: Int, isTarget: Bool, isStart: Bool, label: String? = nil, isFlower: Bool = false) {
         self.coordinate = coordinate
         self.index = index
         self.isTarget = isTarget
         self.isStart = isStart
-        let numStr = "航點 \(index + 1)"
+
+        let prefix = isFlower ? "花苞" : "航點"
+        let defaultName = "\(prefix) \(index + 1)"
+
         if let lbl = label, !lbl.isEmpty {
-            self.title = "\(numStr): \(lbl)"
+            if lbl == defaultName || lbl.contains("\(index + 1)") {
+                self.title = lbl
+            } else {
+                self.title = "\(defaultName): \(lbl)"
+            }
         } else {
-            self.title = numStr
+            self.title = defaultName
         }
+
         self.subtitle = String(format: "%.6f, %.6f", coordinate.latitude, coordinate.longitude)
         super.init()
     }

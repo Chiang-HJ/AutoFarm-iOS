@@ -42,6 +42,32 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var deviceIP: String = "10.7.1.1"
     @Published public var pairingFilePath: String = ""
 
+    private var pushFailureCount: Int = 0
+
+    /// 供地圖與 UI 展示用的基準航點列表 (種花模式顯示花苞點，直線模式顯示航點，杜絕幾千個點)
+    public var displayWaypoints: [RouteNode] {
+        if !originalBasePoints.isEmpty {
+            return originalBasePoints
+        }
+        return routePoints
+    }
+
+    /// 當前正在行進的基準航點索引 (0-based)
+    public var currentDisplayIndex: Int {
+        guard !routePoints.isEmpty, currentRouteIndex < routePoints.count else { return 0 }
+        if executionMode == 1 { // 種花模式：取當前節點的花苞編號
+            let flowerIdx = routePoints[currentRouteIndex].flowerIndex
+            if flowerIdx > 0 {
+                return min(max(flowerIdx - 1, 0), max(displayWaypoints.count - 1, 0))
+            }
+        }
+        if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
+            let ratio = Double(currentRouteIndex) / Double(routePoints.count)
+            return min(Int(ratio * Double(originalBasePoints.count)), max(originalBasePoints.count - 1, 0))
+        }
+        return min(currentRouteIndex, max(displayWaypoints.count - 1, 0))
+    }
+
     private var timer: Timer?
     private var lastTickTime: TimeInterval = 0.0
     private var waitAccumulatedMs: Double = 0.0
@@ -192,6 +218,56 @@ public final class AutoFarmSession: ObservableObject {
         self.waitAccumulatedMs = 0.0
         pushCurrentLocation()
         showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+    }
+
+    /// 跳轉至指定基準航點開始運行 (點擊數字球時觸發)
+    public func jumpToWaypoint(index: Int) {
+        let validIdx = min(max(index, 0), max(displayWaypoints.count - 1, 0))
+        if executionMode == 1 { // 種花模式：尋找對應 flowerIndex 的第一個節點
+            let targetFlowerNum = validIdx + 1
+            if let nodeIdx = routePoints.firstIndex(where: { $0.flowerIndex == targetFlowerNum }) {
+                self.currentRouteIndex = nodeIdx
+                self.currentLat = routePoints[nodeIdx].lat
+                self.currentLng = routePoints[nodeIdx].lng
+            } else if validIdx < displayWaypoints.count {
+                let node = displayWaypoints[validIdx]
+                self.currentLat = node.lat
+                self.currentLng = node.lng
+            }
+        } else if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
+            let ratio = Double(validIdx) / Double(originalBasePoints.count)
+            let nodeIdx = min(Int(ratio * Double(routePoints.count)), max(routePoints.count - 1, 0))
+            self.currentRouteIndex = nodeIdx
+            self.currentLat = routePoints[nodeIdx].lat
+            self.currentLng = routePoints[nodeIdx].lng
+        } else if validIdx < routePoints.count {
+            self.currentRouteIndex = validIdx
+            self.currentLat = routePoints[validIdx].lat
+            self.currentLng = routePoints[validIdx].lng
+        }
+        self.cooldownRemainingSec = 0
+        self.waitAccumulatedMs = 0.0
+        pushCurrentLocation()
+        autoSaveCurrentProgress()
+        showToast("已跳轉至第 \(validIdx + 1) 個航點出發")
+    }
+
+    /// 自動即時保存當前巡航進度快照 (防止 App 意外退出、閃退遺失最新進度)
+    public func autoSaveCurrentProgress() {
+        guard !routePoints.isEmpty, !activeRouteName.isEmpty, activeRouteName != "無路線" else { return }
+        let progress = RouteProgress(
+            routeName: activeRouteName,
+            currentLoop: routeCurrentLoop,
+            loopTarget: routeLoopTarget,
+            currentRouteIndex: currentRouteIndex,
+            totalPoints: originalBasePoints.isEmpty ? routePoints.count : originalBasePoints.count,
+            savedTimestamp: Int64(Date().timeIntervalSince1970 * 1000),
+            routePoints: routePoints,
+            basePoints: originalBasePoints,
+            executionMode: executionMode,
+            fruitWalkDistance: fruitWalkDistance
+        )
+        RouteProgressStore.saveProgress(progress)
     }
 
     /// 平滑移動地圖相機至當前虛擬定位
@@ -392,6 +468,7 @@ public final class AutoFarmSession: ObservableObject {
 
     private func advanceToNextWaypoint() {
         self.currentRouteIndex += 1
+        autoSaveCurrentProgress()
         if self.currentRouteIndex >= self.routePoints.count {
             let shouldLoop = (self.routeLoopTarget == 0) || (self.routeCurrentLoop < self.routeLoopTarget - 1)
             if shouldLoop {
@@ -419,6 +496,7 @@ public final class AutoFarmSession: ObservableObject {
                     }
                 }
                 self.waitAccumulatedMs = 0.0
+                autoSaveCurrentProgress()
                 showToast("開始第 \(self.routeCurrentLoop + 1) 圈")
             } else {
                 self.isRoutePaused = true
@@ -439,11 +517,15 @@ public final class AutoFarmSession: ObservableObject {
         DispatchQueue.main.async {
             switch result {
             case .success:
+                self.pushFailureCount = 0
                 self.isSimulatingLocation = true
             case .failure(let err):
-                self.isSimulatingLocation = false
-                self.showToast("定位失敗: \(err.localizedDescription)")
-                print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
+                self.pushFailureCount += 1
+                if self.pushFailureCount == 15 {
+                    self.isSimulatingLocation = false
+                    self.showToast("通道暫時斷開，正在重新連線...")
+                    print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
+                }
             }
         }
     }

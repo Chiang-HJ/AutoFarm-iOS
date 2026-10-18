@@ -22,7 +22,9 @@ public struct StatusHUDView: View {
             if session.routePoints.isEmpty {
                 return "種花待命中"
             }
-            return "多點種花 \(session.currentRouteIndex + 1)/\(session.routePoints.count) (第 \(session.routeCurrentLoop + 1)/\(loopTotalStr) 圈)"
+            let curFlower = session.currentDisplayIndex + 1
+            let totalFlower = session.displayWaypoints.count
+            return "多點種花 \(curFlower)/\(totalFlower) (第 \(session.routeCurrentLoop + 1)/\(loopTotalStr) 圈)"
         case 2:
             if session.routePoints.isEmpty {
                 return "跳收果實待命中"

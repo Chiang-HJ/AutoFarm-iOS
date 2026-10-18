@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct DatabaseSheet: View {
     @ObservedObject var db = SavedDatabaseStore.shared
@@ -6,6 +7,7 @@ public struct DatabaseSheet: View {
     @Environment(\.dismiss) var dismiss
 
     @State private var selectedTab: Int = 0 // 0: 座標庫, 1: 路徑庫
+    @State private var isFileImporterPresented: Bool = false
     @State private var isPasteImportPresented: Bool = false
     @State private var pasteRouteName: String = ""
     @State private var pasteCoordinatesText: String = ""
@@ -41,6 +43,29 @@ public struct DatabaseSheet: View {
                 leading: Button("關閉") { dismiss() },
                 trailing: headerTrailingButton
             )
+            .fileImporter(
+                isPresented: $isFileImporterPresented,
+                allowedContentTypes: [
+                    UTType(filenameExtension: "gpx") ?? .data,
+                    UTType.commaSeparatedText,
+                    UTType.plainText,
+                    UTType.text,
+                    UTType.data
+                ],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let url):
+                    let (success, name, count, error) = db.importRouteFromFile(url: url)
+                    if success {
+                        session.toastMessage = "成功匯入路線【\(name)】共 \(count) 點！"
+                    } else {
+                        session.toastMessage = error ?? "匯入失敗"
+                    }
+                case .failure(let err):
+                    session.toastMessage = "選取檔案失敗: \(err.localizedDescription)"
+                }
+            }
             .sheet(isPresented: $isPasteImportPresented) {
                 pasteImportSheet
             }
@@ -129,25 +154,40 @@ public struct DatabaseSheet: View {
     // MARK: - 路徑庫視圖
     private var routesView: some View {
         VStack(spacing: 0) {
-            // 貼上匯入快捷列
-            Button(action: {
-                pasteRouteName = ""
-                pasteCoordinatesText = ""
-                isPasteImportPresented = true
-            }) {
-                HStack {
-                    Image(systemName: "doc.on.clipboard.fill")
-                    Text("貼上座標匯入新路徑")
-                        .font(.system(size: 14, weight: .bold))
+            // 匯入捷徑列 (檔案匯入 + 貼上匯入)
+            HStack(spacing: 8) {
+                Button(action: { isFileImporterPresented = true }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.down.fill")
+                        Text("匯入 GPX/CSV/TXT")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.purple)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(Color.blue)
-                .foregroundColor(.white)
-                .cornerRadius(10)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
+
+                Button(action: {
+                    pasteRouteName = ""
+                    pasteCoordinatesText = ""
+                    isPasteImportPresented = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.clipboard.fill")
+                        Text("貼上座標匯入")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                }
             }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
             List {
                 if db.savedRoutes.isEmpty {

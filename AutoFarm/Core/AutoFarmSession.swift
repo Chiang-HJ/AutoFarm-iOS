@@ -30,12 +30,13 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var toastMessage: String? = nil
 
     // Joystick
+    @Published public var isJoystickEnabled: Bool = false
     @Published public var joystickAngle: Double = 0.0
     @Published public var joystickIntensity: Double = 0.0
     @Published public var isJoystickLocked: Bool = false
 
     // Tuning & Pairing
-    @Published public var deviceIP: String = "10.7.0.1"
+    @Published public var deviceIP: String = "10.7.1.1"
     @Published public var pairingFilePath: String = ""
 
     private var timer: Timer?

@@ -81,31 +81,158 @@ public final class SavedDatabaseStore: ObservableObject {
 
     /// 從貼上的多行文字中解析並匯入座標點
     public func importRouteFromPastedText(name: String, text: String) -> (success: Bool, count: Int) {
-        let lines = text.components(separatedBy: .newlines)
-        var parsedNodes: [RouteNode] = []
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("//") { continue }
-
-            // 支援逗號或空格分隔: 25.033964, 121.564468 或 25.033964 121.564468
-            let separators = CharacterSet(charactersIn: ", \t")
-            let parts = trimmed.components(separatedBy: separators).filter { !$0.isEmpty }
-
-            if parts.count >= 2,
-               let lat = Double(parts[0]),
-               let lng = Double(parts[1]) {
-                let label = parts.count >= 3 ? parts[2] : "航點 \(parsedNodes.count + 1)"
-                parsedNodes.append(RouteNode(lat: lat, lng: lng, label: label))
-            }
-        }
-
+        let parsedNodes = parsePlainText(content: text)
         guard !parsedNodes.isEmpty else { return (false, 0) }
 
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmedName.isEmpty ? "匯入路線 (\(parsedNodes.count)點)" : trimmedName
         saveRoute(name: finalName, nodes: parsedNodes)
         return (true, parsedNodes.count)
+    }
+
+    /// 從檔案 URL 匯入路線 (支援 GPX, CSV, TXT)
+    public func importRouteFromFile(url: URL) -> (success: Bool, name: String, count: Int, error: String?) {
+        let isSecured = url.startAccessingSecurityScopedResource()
+        defer {
+            if isSecured { url.stopAccessingSecurityScopedResource() }
+        }
+
+        guard let content = try? String(contentsOf: url, encoding: .utf8) ?? String(contentsOf: url, encoding: .ascii) else {
+            return (false, "", 0, "無法讀取檔案內容 (請確認檔案編碼為 UTF-8 或純文字)")
+        }
+
+        let baseName = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension.lowercased()
+
+        var parsedNodes: [RouteNode] = []
+
+        if ext == "gpx" || content.contains("<gpx") || content.contains("<trkpt") || content.contains("<wpt") {
+            parsedNodes = parseGPX(content: content)
+        } else if ext == "csv" || content.contains(",") {
+            parsedNodes = parseCSV(content: content)
+            if parsedNodes.isEmpty {
+                parsedNodes = parsePlainText(content: content)
+            }
+        } else {
+            parsedNodes = parsePlainText(content: content)
+        }
+
+        guard !parsedNodes.isEmpty else {
+            return (false, baseName, 0, "未能從檔案中解析出有效的經緯度座標點")
+        }
+
+        let finalName = baseName.isEmpty ? "匯入路線 (\(parsedNodes.count)點)" : baseName
+        saveRoute(name: finalName, nodes: parsedNodes)
+        return (true, finalName, parsedNodes.count, nil)
+    }
+
+    private func parseGPX(content: String) -> [RouteNode] {
+        var nodes: [RouteNode] = []
+        let p1 = #"lat\s*=\s*["']([-+]?[0-9]*\.?[0-9]+)["'][^>]*?lon\s*=\s*["']([-+]?[0-9]*\.?[0-9]+)["']"#
+        let p2 = #"lon\s*=\s*["']([-+]?[0-9]*\.?[0-9]+)["'][^>]*?lat\s*=\s*["']([-+]?[0-9]*\.?[0-9]+)["']"#
+
+        let nsContent = content as NSString
+
+        if let reg1 = try? NSRegularExpression(pattern: p1, options: .caseInsensitive) {
+            let matches = reg1.matches(in: content, range: NSRange(location: 0, length: nsContent.length))
+            for m in matches {
+                if m.numberOfRanges >= 3 {
+                    let latStr = nsContent.substring(with: m.range(at: 1))
+                    let lonStr = nsContent.substring(with: m.range(at: 2))
+                    if let lat = Double(latStr), let lon = Double(lonStr) {
+                        nodes.append(RouteNode(lat: lat, lng: lon, label: "GPX \(nodes.count + 1)"))
+                    }
+                }
+            }
+        }
+
+        if nodes.isEmpty, let reg2 = try? NSRegularExpression(pattern: p2, options: .caseInsensitive) {
+            let matches = reg2.matches(in: content, range: NSRange(location: 0, length: nsContent.length))
+            for m in matches {
+                if m.numberOfRanges >= 3 {
+                    let lonStr = nsContent.substring(with: m.range(at: 1))
+                    let latStr = nsContent.substring(with: m.range(at: 2))
+                    if let lat = Double(latStr), let lon = Double(lonStr) {
+                        nodes.append(RouteNode(lat: lat, lng: lon, label: "GPX \(nodes.count + 1)"))
+                    }
+                }
+            }
+        }
+
+        return nodes
+    }
+
+    private func parseCSV(content: String) -> [RouteNode] {
+        let lines = content.components(separatedBy: .newlines)
+        guard !lines.isEmpty else { return [] }
+
+        var latCol = -1
+        var lngCol = -1
+        var nameCol = -1
+
+        var nodes: [RouteNode] = []
+        var startIndex = 0
+
+        let firstLine = lines[0].lowercased()
+        let headers = firstLine.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\"", with: "") }
+        for (i, h) in headers.enumerated() {
+            if h == "lat" || h == "latitude" || h == "緯度" { latCol = i }
+            if h == "lng" || h == "lon" || h == "longitude" || h == "經度" { lngCol = i }
+            if h == "name" || h == "label" || h == "title" || h == "名稱" { nameCol = i }
+        }
+
+        if latCol != -1 && lngCol != -1 {
+            startIndex = 1
+        }
+
+        for i in startIndex..<lines.count {
+            let line = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            let cols = line.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\"", with: "") }
+
+            if latCol != -1 && lngCol != -1 {
+                if cols.count > max(latCol, lngCol),
+                   let lat = Double(cols[latCol]),
+                   let lng = Double(cols[lngCol]) {
+                    let label = (nameCol != -1 && cols.count > nameCol) ? cols[nameCol] : "點 \(nodes.count + 1)"
+                    nodes.append(RouteNode(lat: lat, lng: lng, label: label))
+                }
+            } else {
+                let nums = cols.compactMap { Double($0) }
+                if nums.count >= 2 {
+                    let lat = nums[0]
+                    let lng = nums[1]
+                    if abs(lat) <= 90 && abs(lng) <= 180 {
+                        nodes.append(RouteNode(lat: lat, lng: lng, label: "CSV \(nodes.count + 1)"))
+                    }
+                }
+            }
+        }
+
+        return nodes
+    }
+
+    private func parsePlainText(content: String) -> [RouteNode] {
+        let lines = content.components(separatedBy: .newlines)
+        var nodes: [RouteNode] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("//") { continue }
+
+            let separators = CharacterSet(charactersIn: ", \t;")
+            let parts = trimmed.components(separatedBy: separators).filter { !$0.isEmpty }
+
+            if parts.count >= 2,
+               let lat = Double(parts[0]),
+               let lng = Double(parts[1]) {
+                if abs(lat) <= 90 && abs(lng) <= 180 {
+                    let label = parts.count >= 3 ? parts[2] : "航點 \(nodes.count + 1)"
+                    nodes.append(RouteNode(lat: lat, lng: lng, label: label))
+                }
+            }
+        }
+        return nodes
     }
 
     // MARK: - 持久化儲存

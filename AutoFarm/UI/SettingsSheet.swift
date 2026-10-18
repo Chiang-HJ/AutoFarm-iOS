@@ -17,7 +17,7 @@ public struct SettingsSheet: View {
                     HStack {
                         Text("Tunnel IP")
                         Spacer()
-                        TextField("10.7.0.1", text: $session.deviceIP)
+                        TextField("10.7.1.1", text: $session.deviceIP)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 120)
                     }

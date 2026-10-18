@@ -13,12 +13,12 @@ enum LocationEngineError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidIP: return "Tunnel IP 無效 (請檢查設定，預設為 10.7.0.1)"
-        case .pairingRead: return "無法讀取配對憑證檔 (.plist)，請重新匯入"
-        case .tunnelCreate: return "無法建立通道 (請確認 LocalDevVPN / WireGuard 是否已連線)"
-        case .remoteServer: return "通道已連線但 RemoteXPC 握手失敗"
-        case .simulationCreate: return "無法啟動模擬服務 (請確認 iPhone 開發者模式已開啟)"
-        case .locationSet: return "寫入虛擬座標失敗"
+        case .invalidIP: return "Tunnel IP 無效 (預設為 10.7.1.1 或 10.7.0.1)"
+        case .pairingRead: return "無法讀取配對憑證檔 (.plist)"
+        case .tunnelCreate: return "無法建立通道 (請確認 LocalDevVPN 已連線)：\(LocationEngine.lastDetailedError)"
+        case .remoteServer: return "通道已連線但 RemoteXPC 握手失敗：\(LocationEngine.lastDetailedError)"
+        case .simulationCreate: return "無法啟動模擬服務 (請確認 iPhone 開發者模式已開啟)：\(LocationEngine.lastDetailedError)"
+        case .locationSet: return "寫入虛擬座標失敗：\(LocationEngine.lastDetailedError)"
         case .locationClear: return "清除虛擬定位失敗"
         case .notActive: return "無作用中的定位模擬"
         }
@@ -95,6 +95,16 @@ enum LocationEngine {
         }
     }
 
+    public static var lastDetailedError: String = ""
+
+    private static func extractError(_ err: UnsafeMutablePointer<IdeviceFfiError>?) -> String {
+        guard let err = err else { return "未知錯誤" }
+        let code = err.pointee.code
+        let subCode = err.pointee.sub_code
+        let msg = err.pointee.message != nil ? String(cString: err.pointee.message) : "無詳細訊息"
+        return "代碼(\(code), \(subCode)): \(msg)"
+    }
+
     private static func setLocked(latitude: Double, longitude: Double, pairingPath: String, deviceIP: String) -> Int32 {
         if let locationSimulation {
             if let err = location_simulation_set(locationSimulation, latitude, longitude) {
@@ -136,7 +146,8 @@ enum LocationEngine {
         guard let pairingHandle else { return pairingRead }
         defer { rp_pairing_file_free(pairingHandle) }
 
-        let providerError = withUnsafePointer(to: &address) { pointer in
+        var targetIP = deviceIP
+        var providerError = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 tunnel_create_rppairing(
                     $0,
@@ -150,15 +161,57 @@ enum LocationEngine {
                 )
             }
         }
+
+        // 自動嘗試備用 IP (10.7.1.1 <-> 10.7.0.1 雙向容錯)
+        if providerError != nil {
+            let altIP = (targetIP == "10.7.1.1") ? "10.7.0.1" : (targetIP == "10.7.0.1" ? "10.7.1.1" : "")
+            if !altIP.isEmpty {
+                var altAddress = sockaddr_in()
+                altAddress.sin_family = sa_family_t(AF_INET)
+                altAddress.sin_port = in_port_t(49152).bigEndian
+                if altIP.withCString({ inet_pton(AF_INET, $0, &altAddress.sin_addr) }) == 1 {
+                    idevice_error_free(providerError)
+                    cleanup()
+                    let retryError = withUnsafePointer(to: &altAddress) { pointer in
+                        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                            tunnel_create_rppairing(
+                                $0,
+                                socklen_t(MemoryLayout<sockaddr_in>.stride),
+                                "AutoFarm",
+                                pairingHandle,
+                                nil,
+                                nil,
+                                &adapter,
+                                &handshake
+                            )
+                        }
+                    }
+                    if retryError == nil {
+                        targetIP = altIP
+                        DispatchQueue.main.async {
+                            AutoFarmSession.shared.deviceIP = altIP
+                        }
+                        providerError = nil
+                    } else {
+                        providerError = retryError
+                    }
+                }
+            }
+        }
+
         if let providerError {
+            let detail = extractError(providerError)
             idevice_error_free(providerError)
             cleanup()
+            lastDetailedError = "\(targetIP): \(detail)"
             return tunnelCreate
         }
 
         if let remoteServerError = remote_server_connect_rsd(adapter, handshake, &remoteServer) {
+            let detail = extractError(remoteServerError)
             idevice_error_free(remoteServerError)
             cleanup()
+            lastDetailedError = "RemoteXPC 握手失敗: \(detail)"
             return remoteServerCode
         }
         // 連線成功後儲存更新後的配對資料
@@ -166,16 +219,20 @@ enum LocationEngine {
         _ = savePath.withCString { rp_pairing_file_write(pairingHandle, $0) }
 
         if let simError = location_simulation_new(remoteServer, &locationSimulation) {
+            let detail = extractError(simError)
             idevice_error_free(simError)
             cleanup()
+            lastDetailedError = "模擬服務建立失敗 (請確認開發者模式): \(detail)"
             return simulationCreate
         }
         // location_simulation_new consumes/owns remote server lifecycle alongside handle
         remoteServer = nil
 
         if let setError = location_simulation_set(locationSimulation, latitude, longitude) {
+            let detail = extractError(setError)
             idevice_error_free(setError)
             cleanup()
+            lastDetailedError = "寫入座標失敗: \(detail)"
             return locationSet
         }
         return ok

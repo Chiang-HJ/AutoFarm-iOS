@@ -49,11 +49,31 @@ public struct ContentView: View {
 
                 Spacer()
 
-                // 下層操作區：左側虛擬搖桿 + 右側「目前位置快捷鈕」
+                // 下層操作區：左側搖桿開關與虛擬搖桿 + 右側「目前位置快捷鈕」
                 HStack(alignment: .bottom, spacing: 12) {
-                    VirtualJoystickView()
-                        .padding(.leading, 16)
-                        .padding(.bottom, 20)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if session.isJoystickEnabled {
+                            VirtualJoystickView()
+                                .transition(.scale.combined(with: .opacity))
+                        }
+
+                        // 搖桿開關切換鈕
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                session.isJoystickEnabled.toggle()
+                            }
+                        }) {
+                            Image(systemName: session.isJoystickEnabled ? "gamecontroller.fill" : "gamecontroller")
+                                .font(.system(size: 18))
+                                .foregroundColor(session.isJoystickEnabled ? .white : .blue)
+                                .frame(width: 44, height: 44)
+                                .background(session.isJoystickEnabled ? Color.blue : Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
+                        }
+                    }
+                    .padding(.leading, 16)
+                    .padding(.bottom, 12)
 
                     Spacer()
 
@@ -72,7 +92,7 @@ public struct ContentView: View {
                             .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
                     }
                     .padding(.trailing, 16)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 12)
                 }
 
                 ControlDrawerView(

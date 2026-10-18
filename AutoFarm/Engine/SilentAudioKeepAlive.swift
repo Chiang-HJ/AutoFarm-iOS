@@ -1,17 +1,13 @@
 import AVFoundation
 import Foundation
 
-/// Plays near-silent audio so iOS keeps AutoFarm runnable (and able to accept
-/// TCP) while in background.
-public final class SilentAudioKeepAlive {
-    public static let shared = SilentAudioKeepAlive()
-
+/// Plays near-silent audio so iOS keeps Locus runnable (and able to accept
+/// TCP) while the user is in Settings › Developer Mode.
+final class SilentAudioKeepAlive {
     private var player: AVAudioPlayer?
     private var wasActive = false
 
-    public init() {}
-
-    public func start() {
+    func start() {
         guard !wasActive else { return }
         do {
             let session = AVAudioSession.sharedInstance()
@@ -33,7 +29,7 @@ public final class SilentAudioKeepAlive {
         }
     }
 
-    public func stop() {
+    func stop() {
         player?.stop()
         player = nil
         wasActive = false

@@ -42,6 +42,9 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var deviceIP: String = "10.7.1.1"
     @Published public var pairingFilePath: String = ""
 
+    // Detour & Resume (方案 A: 臨時瞬移插隊記憶)
+    @Published public var detourDepartureCoord: CLLocationCoordinate2D? = nil
+
     // Login & Auth State
     @Published public var isLoggedIn: Bool = false
     @Published public var loggedInUsername: String = ""
@@ -205,7 +208,7 @@ public final class AutoFarmSession: ObservableObject {
         showToast("已啟動同心圓種花 (\(nodes.count) 點，無限循環)")
     }
 
-    /// 暫停 / 繼續切換
+    /// 暫停 / 繼續切換 (方案 A: 若有臨時瞬移插隊，按繼續自動瞬移回離開點接續巡航)
     public func toggleRoutePause() {
         self.isRoutePaused.toggle()
         if self.isRoutePaused {
@@ -213,7 +216,17 @@ public final class AutoFarmSession: ObservableObject {
             self.cooldownRemainingSec = 0
             showToast("路線已暫停")
         } else {
-            showToast("路線繼續執行")
+            // 如果之前有臨時瞬移插隊，瞬移回剛才離開點接續
+            if let departure = detourDepartureCoord {
+                self.currentLat = departure.latitude
+                self.currentLng = departure.longitude
+                self.detourDepartureCoord = nil
+                pushCurrentLocation()
+                showToast("已返回離開點，繼續巡航路線")
+            } else {
+                showToast("路線繼續執行")
+            }
+            ensureEngineRunning()
         }
     }
 
@@ -412,6 +425,7 @@ public final class AutoFarmSession: ObservableObject {
         self.cooldownRemainingSec = 0
         self.waitAccumulatedMs = 0.0
         self.etaString = "--:--"
+        self.detourDepartureCoord = nil
         showToast("已停止路線 (維持當前虛擬位置)")
     }
 
@@ -425,15 +439,55 @@ public final class AutoFarmSession: ObservableObject {
         showToast("已停止虛擬定位，回到現實位置")
     }
 
-    /// 手動瞬移至指定座標
-    public func teleport(to lat: Double, lng: Double) {
-        if !isRoutePaused {
+    /// 手動瞬移至指定座標 (方案 A: 支援掛起插隊，自動記錄中斷點與瞬移歷史，按繼續自動返回接續)
+    public func teleport(to lat: Double, lng: Double, label: String = "") {
+        // 若當前有排程路線且尚未記錄過插隊中斷點
+        if !routePoints.isEmpty {
+            if detourDepartureCoord == nil {
+                self.detourDepartureCoord = CLLocationCoordinate2D(latitude: currentLat, longitude: currentLng)
+            }
+            self.isRoutePaused = true
+        } else if !isRoutePaused {
             isRoutePaused = true
         }
+
         self.currentLat = lat
         self.currentLng = lng
         pushCurrentLocation()
-        showToast("已瞬移至 \(String(format: "%.5f", lat)), \(String(format: "%.5f", lng))")
+
+        let pointLabel = label.isEmpty ? "自訂座標" : label
+        SavedDatabaseStore.shared.addTeleportHistory(lat: lat, lng: lng, label: pointLabel)
+
+        if detourDepartureCoord != nil {
+            showToast("已瞬移至【\(pointLabel)】(路線已暫停，按繼續自動返回原位接續)")
+        } else {
+            showToast("已瞬移至 \(String(format: "%.5f", lat)), \(String(format: "%.5f", lng))")
+        }
+    }
+
+    /// 從任意包含座標的文字中自動萃取有效經緯度 (自動過濾中文、空格、網址等雜訊，支援經緯度自動判斷)
+    public static func extractCoordinates(from text: String) -> (lat: Double, lng: Double)? {
+        let pattern = "(-?\\d{1,3}\\.\\d+)[^0-9.-]+(-?\\d{1,3}\\.\\d+)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
+        let nsString = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+
+        for match in matches {
+            if match.numberOfRanges >= 3 {
+                let s1 = nsString.substring(with: match.range(at: 1))
+                let s2 = nsString.substring(with: match.range(at: 2))
+                if let v1 = Double(s1), let v2 = Double(s2) {
+                    if abs(v1) <= 90.0 && abs(v2) <= 180.0 {
+                        // 標準 lat, lng
+                        return (v1, v2)
+                    } else if abs(v1) <= 180.0 && abs(v2) <= 90.0 {
+                        // 顛倒輸入 lng, lat
+                        return (v2, v1)
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Low-Level Loop & DVT Push

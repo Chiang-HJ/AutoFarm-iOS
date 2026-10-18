@@ -10,6 +10,7 @@ public struct ContentView: View {
     @State private var isSharePresented: Bool = false
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
+    @State private var isMushroomHelperPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -111,6 +112,20 @@ public struct ContentView: View {
                                 .clipShape(Circle())
                                 .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
                         }
+
+                        // 卡菇助手
+                        Button(action: {
+                            hideKeyboard()
+                            self.isMushroomHelperPresented = true
+                        }) {
+                            Image(systemName: "camera.viewfinder")
+                                .font(.system(size: 18))
+                                .foregroundColor(.green)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+                        }
                     }
                     .padding(.trailing, 16)
                     .padding(.bottom, 10)
@@ -167,6 +182,9 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isSettingsPresented) {
             SettingsSheet()
+        }
+        .sheet(isPresented: $isMushroomHelperPresented) {
+            MushroomHelperView()
         }
     }
 
@@ -550,15 +568,15 @@ public struct ContentView: View {
 
     private func handleCoordinateSearch() {
         hideKeyboard()
-        let cleaned = searchInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.contains(",") {
-            let parts = cleaned.split(separator: ",")
-            if parts.count == 2,
-               let lat = Double(parts[0].trimmingCharacters(in: .whitespaces)),
-               let lng = Double(parts[1].trimmingCharacters(in: .whitespaces)) {
-                session.teleport(to: lat, lng: lng)
-                searchInput = ""
-            }
+        let raw = searchInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+
+        if let coords = AutoFarmSession.extractCoordinates(from: raw) {
+            session.teleport(to: coords.lat, lng: coords.lng, label: "搜尋瞬移")
+            session.centerCameraOnCurrentLocation()
+            searchInput = ""
+        } else {
+            session.toastMessage = "未能從輸入內容中辨識出有效座標"
         }
     }
 

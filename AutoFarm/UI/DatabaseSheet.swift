@@ -6,18 +6,31 @@ public struct DatabaseSheet: View {
     @ObservedObject var session = AutoFarmSession.shared
     @Environment(\.dismiss) var dismiss
 
-    @State private var selectedTab: Int = 0 // 0: 座標庫, 1: 路徑庫
+    @State private var selectedTab: Int = 0 // 0: 座標庫, 1: 路徑庫, 2: 瞬移紀錄
     @State private var isFileImporterPresented: Bool = false
     @State private var isPasteImportPresented: Bool = false
     @State private var pasteRouteName: String = ""
+    @State private var pasteRouteTag: String = ""
     @State private var pasteCoordinatesText: String = ""
 
     @State private var isAddLocationPresented: Bool = false
     @State private var newLocName: String = ""
+    @State private var newLocTag: String = ""
     @State private var newLocLat: String = ""
     @State private var newLocLng: String = ""
 
-    @State private var selectedRouteForMode: SavedRoute? = nil
+    // 標籤編輯
+    @State private var isEditTagPresented: Bool = false
+    @State private var editingItemId: UUID? = nil
+    @State private var editingItemIsRoute: Bool = false
+    @State private var editingItemTitle: String = ""
+    @State private var editingTagText: String = ""
+
+    // 路線進度詢問 ActionSheet
+    @State private var isResumeRouteChoicePresented: Bool = false
+    @State private var routeForResumeChoice: SavedRoute? = nil
+
+    @State private var selectedRouteForConfig: SavedRoute? = nil
 
     public init() {}
 
@@ -25,8 +38,9 @@ public struct DatabaseSheet: View {
         NavigationView {
             VStack(spacing: 0) {
                 Picker("資料庫類別", selection: $selectedTab) {
-                    Text("座標資料庫 (\(db.savedLocations.count))").tag(0)
-                    Text("路徑資料庫 (\(db.savedRoutes.count))").tag(1)
+                    Text("座標 (\(db.savedLocations.count))").tag(0)
+                    Text("路線 (\(db.savedRoutes.count))").tag(1)
+                    Text("瞬移紀錄 (\(db.teleportHistory.count))").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
@@ -34,8 +48,10 @@ public struct DatabaseSheet: View {
 
                 if selectedTab == 0 {
                     locationsView
-                } else {
+                } else if selectedTab == 1 {
                     routesView
+                } else {
+                    teleportHistoryView
                 }
             }
             .navigationTitle("座標與路徑資料庫")
@@ -73,41 +89,16 @@ public struct DatabaseSheet: View {
             .sheet(isPresented: $isAddLocationPresented) {
                 addLocationSheet
             }
-            .actionSheet(item: $selectedRouteForMode) { route in
-                ActionSheet(
-                    title: Text("【\(route.name)】共 \(route.nodes.count) 點"),
-                    message: Text("請選擇此路線的執行模式："),
-                    buttons: [
-                        .default(Text("直線巡航 (依序循環)")) {
-                            session.startLinearRoute(
-                                name: route.name,
-                                basePoints: route.nodes,
-                                loops: 0,
-                                mode: session.loopMode
-                            )
-                            dismiss()
-                        },
-                        .default(Text("繞圈種花 (多花點雙圈28m/24m)")) {
-                            session.startFlowerRoute(
-                                name: route.name,
-                                basePoints: route.nodes,
-                                loops: 0,
-                                settings: session.flowerSettings
-                            )
-                            dismiss()
-                        },
-                        .default(Text("跳收果實 (南北80m直徑行走)")) {
-                            session.startFruitRoute(
-                                name: route.name,
-                                basePoints: route.nodes,
-                                loops: 0,
-                                walkDistance: 80.0
-                            )
-                            dismiss()
-                        },
-                        .cancel(Text("取消"))
-                    ]
-                )
+            .sheet(isPresented: $isEditTagPresented) {
+                editTagSheet
+            }
+            .sheet(item: $selectedRouteForConfig) { route in
+                RouteModeConfigSheet(route: route) { mode, loopMode, loops, flowerSettings, fruitWalkDist in
+                    executeSelectedRoute(route: route, mode: mode, loopMode: loopMode, loops: loops, flowerSettings: flowerSettings, fruitWalkDist: fruitWalkDist)
+                }
+            }
+            .actionSheet(isPresented: $isResumeRouteChoicePresented) {
+                resumeRouteActionSheet
             }
         }
     }
@@ -115,35 +106,72 @@ public struct DatabaseSheet: View {
     // MARK: - 座標庫視圖
     private var locationsView: some View {
         List {
-            if db.savedLocations.isEmpty {
-                Text("尚未儲存任何座標。可在地圖長按或點選目前位置進行儲存。")
+            if db.sortedLocations.isEmpty {
+                Text("尚未儲存任何座標。可在地圖長按或點右上角新增按鈕儲存。")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             } else {
-                ForEach(db.savedLocations) { loc in
-                    Button(action: {
-                        session.teleport(to: loc.latitude, lng: loc.longitude)
-                        dismiss()
-                    }) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(loc.name)
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(.primary)
-                                Text("\(String(format: "%.6f", loc.latitude)), \(String(format: "%.6f", loc.longitude))")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Text("點擊瞬移")
-                                .font(.caption)
-                                .foregroundColor(.blue)
+                ForEach(db.sortedLocations) { loc in
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            db.togglePinLocation(id: loc.id)
+                        }) {
+                            Image(systemName: loc.isPinned ? "pin.fill" : "pin")
+                                .font(.system(size: 14))
+                                .foregroundColor(loc.isPinned ? .orange : .secondary.opacity(0.4))
                         }
+                        .buttonStyle(BorderlessButtonStyle())
+
+                        Button(action: {
+                            session.teleport(to: loc.latitude, lng: loc.longitude, label: loc.name)
+                            dismiss()
+                        }) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 4) {
+                                        Text(loc.name)
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(.primary)
+                                        if !loc.tag.isEmpty {
+                                            Text(loc.tag)
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(.blue)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Color.blue.opacity(0.12))
+                                                .cornerRadius(4)
+                                        }
+                                    }
+                                    Text("\(String(format: "%.6f", loc.latitude)), \(String(format: "%.6f", loc.longitude))")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Text("瞬移")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.blue)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue.opacity(0.1))
+                                    .cornerRadius(6)
+                            }
+                        }
+
+                        Button(action: {
+                            openEditTag(id: loc.id, isRoute: false, currentTitle: loc.name, currentTag: loc.tag)
+                        }) {
+                            Image(systemName: "tag")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
                     }
                 }
                 .onDelete { indexSet in
+                    let sorted = db.sortedLocations
                     for i in indexSet {
-                        let id = db.savedLocations[i].id
+                        let id = sorted[i].id
                         db.deleteLocation(id: id)
                     }
                 }
@@ -172,6 +200,7 @@ public struct DatabaseSheet: View {
 
                 Button(action: {
                     pasteRouteName = ""
+                    pasteRouteTag = ""
                     pasteCoordinatesText = ""
                     isPasteImportPresented = true
                 }) {
@@ -191,35 +220,139 @@ public struct DatabaseSheet: View {
             .padding(.vertical, 8)
 
             List {
-                if db.savedRoutes.isEmpty {
-                    Text("尚未儲存任何路徑。可點擊上方按鈕貼上座標匯入。")
+                if db.sortedRoutes.isEmpty {
+                    Text("尚未儲存任何路徑。可點擊上方按鈕匯入。")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(db.savedRoutes) { route in
-                        Button(action: {
-                            self.selectedRouteForMode = route
-                        }) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(route.name)
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(.primary)
-                                    Text("共 \(route.nodes.count) 個航點")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Text("選擇模式 >")
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
+                    ForEach(db.sortedRoutes) { route in
+                        HStack(spacing: 8) {
+                            Button(action: {
+                                db.togglePinRoute(id: route.id)
+                            }) {
+                                Image(systemName: route.isPinned ? "pin.fill" : "pin")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(route.isPinned ? .orange : .secondary.opacity(0.4))
                             }
+                            .buttonStyle(BorderlessButtonStyle())
+
+                            Button(action: {
+                                handleRouteSelected(route)
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 4) {
+                                            Text(route.name)
+                                                .font(.system(size: 14, weight: .bold))
+                                                .foregroundColor(.primary)
+                                            if !route.tag.isEmpty {
+                                                Text(route.tag)
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundColor(.purple)
+                                                    .padding(.horizontal, 5)
+                                                    .padding(.vertical, 1)
+                                                    .background(Color.purple.opacity(0.12))
+                                                    .cornerRadius(4)
+                                            }
+                                            if RouteProgressStore.hasProgress(for: route.name) {
+                                                Text("有暫存")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundColor(.orange)
+                                                    .padding(.horizontal, 4)
+                                                    .padding(.vertical, 1)
+                                                    .background(Color.orange.opacity(0.15))
+                                                    .cornerRadius(3)
+                                            }
+                                        }
+                                        Text("共 \(route.nodes.count) 個航點")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Text("設定 >")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.purple)
+                                }
+                            }
+
+                            Button(action: {
+                                openEditTag(id: route.id, isRoute: true, currentTitle: route.name, currentTag: route.tag)
+                            }) {
+                                Image(systemName: "tag")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
                         }
                     }
                     .onDelete { indexSet in
+                        let sorted = db.sortedRoutes
                         for i in indexSet {
-                            let id = db.savedRoutes[i].id
+                            let id = sorted[i].id
                             db.deleteRoute(id: id)
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+        }
+    }
+
+    // MARK: - 瞬移歷史紀錄視圖
+    private var teleportHistoryView: some View {
+        VStack(spacing: 0) {
+            if !db.teleportHistory.isEmpty {
+                HStack {
+                    Text("共 \(db.teleportHistory.count) 筆歷史紀錄")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button(action: {
+                        db.clearTeleportHistory()
+                        session.toastMessage = "已清空歷史紀錄"
+                    }) {
+                        Text("清空紀錄")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.red)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+            }
+
+            List {
+                if db.teleportHistory.isEmpty {
+                    Text("尚無瞬移紀錄。")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(db.teleportHistory) { item in
+                        Button(action: {
+                            session.teleport(to: item.latitude, lng: item.longitude, label: item.label)
+                            dismiss()
+                        }) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 6) {
+                                        Text(item.label)
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(.primary)
+                                        Text(item.formattedTime)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Text("\(String(format: "%.6f", item.latitude)), \(String(format: "%.6f", item.longitude))")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Text("瞬移")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.blue)
+                            }
                         }
                     }
                 }
@@ -233,6 +366,7 @@ public struct DatabaseSheet: View {
         if selectedTab == 0 {
             Button(action: {
                 newLocName = ""
+                newLocTag = ""
                 newLocLat = "\(session.currentLat)"
                 newLocLng = "\(session.currentLng)"
                 isAddLocationPresented = true
@@ -242,22 +376,157 @@ public struct DatabaseSheet: View {
         }
     }
 
+    // MARK: - 路線處理
+    private func handleRouteSelected(_ route: SavedRoute) {
+        if RouteProgressStore.hasProgress(for: route.name) {
+            self.routeForResumeChoice = route
+            self.isResumeRouteChoicePresented = true
+        } else {
+            self.selectedRouteForConfig = route
+        }
+    }
+
+    private var resumeRouteActionSheet: ActionSheet {
+        let name = routeForResumeChoice?.name ?? "此路線"
+        return ActionSheet(
+            title: Text("發現路線【\(name)】暫存進度"),
+            message: Text("此路線有先前暫存之進度，請選擇執行方式："),
+            buttons: [
+                .default(Text("接續上次進度")) {
+                    if let r = routeForResumeChoice, let progress = RouteProgressStore.getProgress(for: r.name) {
+                        session.resumeProgress(progress)
+                        dismiss()
+                    }
+                    routeForResumeChoice = nil
+                },
+                .destructive(Text("從頭全新開始 (重置進度)")) {
+                    if let r = routeForResumeChoice {
+                        RouteProgressStore.clearProgress(for: r.name)
+                        selectedRouteForConfig = r
+                    }
+                    routeForResumeChoice = nil
+                },
+                .cancel(Text("取消")) {
+                    routeForResumeChoice = nil
+                }
+            ]
+        )
+    }
+
+    private func executeSelectedRoute(
+        route: SavedRoute,
+        mode: Int,
+        loopMode: LoopMode,
+        loops: Int,
+        flowerSettings: MultiFlowerSettings,
+        fruitWalkDist: Double
+    ) {
+        switch mode {
+        case 0:
+            session.startLinearRoute(
+                name: route.name,
+                basePoints: route.nodes,
+                loops: loops,
+                mode: loopMode
+            )
+        case 1:
+            session.startFlowerRoute(
+                name: route.name,
+                basePoints: route.nodes,
+                loops: loops,
+                settings: flowerSettings
+            )
+        case 2:
+            session.startFruitRoute(
+                name: route.name,
+                basePoints: route.nodes,
+                loops: loops,
+                walkDistance: fruitWalkDist
+            )
+        default:
+            break
+        }
+        dismiss()
+    }
+
+    // MARK: - 標籤編輯
+    private func openEditTag(id: UUID, isRoute: Bool, currentTitle: String, currentTag: String) {
+        self.editingItemId = id
+        self.editingItemIsRoute = isRoute
+        self.editingItemTitle = currentTitle
+        self.editingTagText = currentTag
+        self.isEditTagPresented = true
+    }
+
+    private var editTagSheet: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("編輯標籤分類")) {
+                    Text(editingItemTitle)
+                        .font(.headline)
+                    TextField("輸入標籤分類名稱 (例：花苞區、日常補給)", text: $editingTagText)
+                }
+
+                Section {
+                    Button("儲存標籤") {
+                        if let id = editingItemId {
+                            if editingItemIsRoute {
+                                db.updateRouteTag(id: id, tag: editingTagText)
+                            } else {
+                                db.updateLocationTag(id: id, tag: editingTagText)
+                            }
+                        }
+                        isEditTagPresented = false
+                    }
+                    .frame(maxWidth: .infinity)
+                    .foregroundColor(.blue)
+
+                    if !editingTagText.isEmpty {
+                        Button("清除標籤") {
+                            if let id = editingItemId {
+                                if editingItemIsRoute {
+                                    db.updateRouteTag(id: id, tag: "")
+                                } else {
+                                    db.updateLocationTag(id: id, tag: "")
+                                }
+                            }
+                            isEditTagPresented = false
+                        }
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.red)
+                    }
+                }
+            }
+            .navigationTitle("標籤設定")
+            .navigationBarItems(leading: Button("取消") { isEditTagPresented = false })
+        }
+    }
+
     // MARK: - 貼上座標匯入 Sheet
     private var pasteImportSheet: some View {
         NavigationView {
             Form {
                 Section(header: Text("路線基本資訊")) {
                     TextField("輸入路線名稱 (例如：大安花區巡航)", text: $pasteRouteName)
+                    TextField("標籤分類 (選填，例如：大安區、刷花)", text: $pasteRouteTag)
                 }
 
-                Section(header: Text("貼上座標列表 (支援多行，格式：lat,lng)"), footer: Text("範例：\n25.033964, 121.564468\n25.034500, 121.565200\n支援以逗號或空格分隔之經緯度座標。")) {
+                Section(header: Text("貼上座標列表 (支援多行，格式：lat,lng)"), footer: Text("範例：\n25.033964, 121.564468\n25.034500, 121.565200\n支援以逗號、空格或分號分隔之經緯度座標。")) {
                     TextEditor(text: $pasteCoordinatesText)
                         .frame(minHeight: 180)
                         .font(.system(size: 12, design: .monospaced))
                 }
 
                 Section {
-                    Button(action: handlePasteImport) {
+                    Button(action: {
+                        let (success, count) = db.importRouteFromPastedText(name: pasteRouteName, text: pasteCoordinatesText, tag: pasteRouteTag)
+                        if success {
+                            isPasteImportPresented = false
+                            session.toastMessage = "已匯入 \(count) 個航點！"
+                        } else {
+                            session.toastMessage = "未能解析出座標，請檢查格式"
+                        }
+                    }) {
                         HStack {
                             Spacer()
                             Text("解析並匯入路徑庫")
@@ -269,7 +538,7 @@ public struct DatabaseSheet: View {
                     .listRowBackground(Color.blue)
                 }
             }
-            .navigationTitle("貼上座標匯入路徑")
+            .navigationTitle("貼上座標匯入")
             .navigationBarItems(leading: Button("取消") { isPasteImportPresented = false })
         }
     }
@@ -278,8 +547,9 @@ public struct DatabaseSheet: View {
     private var addLocationSheet: some View {
         NavigationView {
             Form {
-                Section(header: Text("座標名稱")) {
-                    TextField("例如：信義威秀大花苞", text: $newLocName)
+                Section(header: Text("座標名稱與標籤")) {
+                    TextField("名稱 (例如：信義威秀大花苞)", text: $newLocName)
+                    TextField("標籤分類 (選填，例如：花苞、補給站)", text: $newLocTag)
                 }
                 Section(header: Text("經緯度")) {
                     TextField("緯度 (Latitude)", text: $newLocLat)
@@ -290,21 +560,15 @@ public struct DatabaseSheet: View {
                 Section {
                     Button("儲存此座標") {
                         if let lat = Double(newLocLat), let lng = Double(newLocLng) {
-                            db.addLocation(name: newLocName, latitude: lat, longitude: lng)
+                            db.addLocation(name: newLocName, latitude: lat, longitude: lng, tag: newLocTag)
                             isAddLocationPresented = false
+                            session.toastMessage = "座標已儲存"
                         }
                     }
                 }
             }
             .navigationTitle("新增座標")
             .navigationBarItems(leading: Button("取消") { isAddLocationPresented = false })
-        }
-    }
-
-    private func handlePasteImport() {
-        let (success, count) = db.importRouteFromPastedText(name: pasteRouteName, text: pasteCoordinatesText)
-        if success {
-            isPasteImportPresented = false
         }
     }
 }

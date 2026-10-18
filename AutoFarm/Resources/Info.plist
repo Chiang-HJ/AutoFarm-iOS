@@ -42,6 +42,8 @@
 	<string>AutoFarm 使用您的位置以在地圖上定位並規劃巡航路線。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>AutoFarm 在背景中維持輕量連線，以確保巡邏時模擬定位不中斷。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>AutoFarm 需要存取相簿以讀取遊戲最新截圖並進行蘑菇資訊分析。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>AutoFarm 使用區域網路連線至本機開發者調試通道 (LocalDevVPN)，以執行系統級模擬定位。數據僅在設備本機處理。</string>
 	<key>NSBonjourServices</key>
@@ -112,6 +114,7 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>localdevvpn</string>
+		<string>pikmin</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

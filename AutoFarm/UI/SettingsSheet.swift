@@ -25,10 +25,19 @@ public struct SettingsSheet: View {
                                 HStack {
                                     Image(systemName: "checkmark.seal.fill")
                                         .foregroundColor(.green)
-                                    Text("已存在信任憑證文件 (RPPairing)")
+                                    Text("已載入合法信任憑證 (RPPairing)")
                                         .font(.subheadline)
                                         .fontWeight(.semibold)
                                         .foregroundColor(.green)
+                                }
+                            } else {
+                                HStack {
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .foregroundColor(.orange)
+                                    Text("尚未載入配對憑證（請點下方「剪貼簿貼上憑證」）")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.orange)
                                 }
                             }
 

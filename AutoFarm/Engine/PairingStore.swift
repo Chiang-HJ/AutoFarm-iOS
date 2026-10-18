@@ -46,15 +46,13 @@ public final class PairingStore: ObservableObject {
         if !hasPairingFile {
             // 自動偵測並載入預先打包在 App Bundle 內的專屬憑證
             if let bundleURL = Bundle.main.url(forResource: "rp_pairing_file", withExtension: "plist") ??
+                               Bundle.main.url(forResource: "pairingFile", withExtension: "plist") ??
                                Bundle.main.url(forResource: "rp_pairing_file", withExtension: "mobiledevicepairing") {
                 if let data = try? Data(contentsOf: bundleURL) {
                     try? installPairingData(data)
                 }
             }
             refresh()
-        }
-        if !hasPairingFile {
-            _ = generateNewRemotePairing()
         }
     }
 

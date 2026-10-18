@@ -132,15 +132,9 @@ enum LocationEngine {
             }
         }
 
-        // 若讀取既有檔案失敗（如傳入傳統 iTunes Lockdown plist），自動在手機本機生成新 RemotePairing 金鑰
         if !readSuccess {
-            if let genErr = "AutoFarm".withCString({ rp_pairing_file_generate($0, &pairingHandle) }) {
-                idevice_error_free(genErr)
-                return pairingRead
-            }
-            guard let handle = pairingHandle else { return pairingRead }
-            let savePath = pairingPath.isEmpty ? PairingStore.shared.pairingPath : pairingPath
-            _ = savePath.withCString { rp_pairing_file_write(handle, $0) }
+            LocationEngine.lastDetailedError = "找不到有效的 RPPairing 憑證檔案（請先在設定中點擊「剪貼簿貼上憑證」或「匯入配對檔案」）"
+            return pairingRead
         }
 
         guard let pairingHandle else { return pairingRead }

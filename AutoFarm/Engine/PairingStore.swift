@@ -1,6 +1,7 @@
 import Foundation
 import UniformTypeIdentifiers
 import UIKit
+import idevice
 
 public final class PairingStore: ObservableObject {
     public static let shared = PairingStore()
@@ -42,10 +43,32 @@ public final class PairingStore: ObservableObject {
 
     public init() {
         refresh()
+        if !hasPairingFile {
+            _ = generateNewRemotePairing()
+        }
     }
 
     public func refresh() {
         hasPairingFile = FileManager.default.fileExists(atPath: pairingURL.path)
+    }
+
+    @discardableResult
+    public func generateNewRemotePairing() -> URL? {
+        var handle: OpaquePointer?
+        if let err = "AutoFarm".withCString({ rp_pairing_file_generate($0, &handle) }) {
+            idevice_error_free(err)
+            return nil
+        }
+        guard let handle else { return nil }
+        defer { rp_pairing_file_free(handle) }
+
+        let destURL = Self.directoryURL.appendingPathComponent(Self.fileName)
+        if let writeErr = destURL.path.withCString({ rp_pairing_file_write(handle, $0) }) {
+            idevice_error_free(writeErr)
+            return nil
+        }
+        refresh()
+        return destURL
     }
 
     public static func availablePairings() -> [URL] {

@@ -46,6 +46,8 @@ public final class AutoFarmSession: ObservableObject {
         // Load default pairing if exists
         if let defaultPairing = PairingStore.availablePairings().first {
             self.pairingFilePath = defaultPairing.path
+        } else {
+            self.pairingFilePath = PairingStore.shared.pairingPath
         }
     }
 
@@ -398,14 +400,11 @@ public final class AutoFarmSession: ObservableObject {
     }
 
     private func pushCurrentLocation() {
-        guard !pairingFilePath.isEmpty else {
-            showToast("尚未選定配對憑證，請至右上角設定選取")
-            return
-        }
+        let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath
         let result = LocationEngine.set(
             latitude: currentLat,
             longitude: currentLng,
-            pairingPath: pairingFilePath,
+            pairingPath: pPath,
             deviceIP: deviceIP
         )
         DispatchQueue.main.async {
@@ -416,6 +415,28 @@ public final class AutoFarmSession: ObservableObject {
                 self.isSimulatingLocation = false
                 self.showToast("定位失敗: \(err.localizedDescription)")
                 print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
+            }
+        }
+    }
+
+    /// 借鏡 FreeWay: 握手並準備連線 (用於在 4G/Wi-Fi 下預先驗證通道)
+    public func prepareConnection() {
+        showToast("正在建立調試通道握手...")
+        let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath
+        let result = LocationEngine.set(
+            latitude: currentLat,
+            longitude: currentLng,
+            pairingPath: pPath,
+            deviceIP: deviceIP
+        )
+        DispatchQueue.main.async {
+            switch result {
+            case .success:
+                self.isSimulatingLocation = true
+                self.showToast("通道握手成功！可開回行動數據開始巡航")
+            case .failure(let err):
+                self.isSimulatingLocation = false
+                self.showToast("連線未就緒: \(err.localizedDescription)")
             }
         }
     }

@@ -44,10 +44,22 @@ public struct SettingsSheet: View {
                         }
                     }
 
+                    Button(action: {
+                        if let newUrl = PairingStore.shared.generateNewRemotePairing() {
+                            session.pairingFilePath = newUrl.path
+                            loadPairings()
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "key.fill")
+                            Text("免電腦一鍵生成/重設本機配對憑證")
+                        }
+                    }
+
                     Button(action: { isDocumentPickerPresented = true }) {
                         HStack {
                             Image(systemName: "doc.badge.plus")
-                            Text("從「檔案」匯入配對憑證 (.plist)")
+                            Text("從「檔案」手動匯入憑證 (.plist)")
                         }
                     }
                 }
@@ -60,13 +72,22 @@ public struct SettingsSheet: View {
                             .multilineTextAlignment(.trailing)
                             .frame(width: 120)
                     }
-                    Text("預設為 10.7.0.1。請確保 LocalDevVPN 已連線，方可建立底層調試通訊通道。")
+
+                    Button(action: { session.prepareConnection() }) {
+                        HStack {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                            Text("測試通道握手 (準備連線)")
+                                .fontWeight(.bold)
+                        }
+                    }
+
+                    Text("4G 行動網路免 Wi-Fi 巡航 SOP（FreeWay 驗收秘訣）：\n1. 確認 LocalDevVPN 已連線 (Connect)。\n2. 下拉手機控制中心，暫時點一下關閉「行動數據」（或連著 Wi-Fi）。\n3. 點擊上方【測試通道握手 (準備連線)】。\n4. 握手成功後，立刻開回行動數據，即可全程使用 4G 行動網路正常巡邏打怪！")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
                 Section(header: Text("免越獄使用說明")) {
-                    Text("1. iPhone 必須開啟「開發者模式」（設定 → 隱私權與安全性 → 開發者模式）。\n2. 匯入透過電腦生成的 pairing plist 憑證。\n3. 連接 LocalDevVPN 後，即可免電腦獨立修改系統定位。")
+                    Text("1. iPhone 必須開啟「開發者模式」（設定 → 隱私權與安全性 → 最下方開發者模式）。\n2. 本版已支援免電腦自動生成 RemotePairing 配對金鑰。\n3. 連接 LocalDevVPN 後，完成握手即可獨立修改系統定位。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

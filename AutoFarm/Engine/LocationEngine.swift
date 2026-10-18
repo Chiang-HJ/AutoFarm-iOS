@@ -112,10 +112,27 @@ enum LocationEngine {
         guard inetResult == 1 else { return invalidIP }
 
         var pairingHandle: OpaquePointer?
-        if let pairingError = pairingPath.withCString({ rp_pairing_file_read($0, &pairingHandle) }) {
-            idevice_error_free(pairingError)
-            return pairingRead
+        var readSuccess = false
+        if !pairingPath.isEmpty && FileManager.default.fileExists(atPath: pairingPath) {
+            if let pairingError = pairingPath.withCString({ rp_pairing_file_read($0, &pairingHandle) }) {
+                idevice_error_free(pairingError)
+                pairingHandle = nil
+            } else if pairingHandle != nil {
+                readSuccess = true
+            }
         }
+
+        // 若讀取既有檔案失敗（如傳入傳統 iTunes Lockdown plist），自動在手機本機生成新 RemotePairing 金鑰
+        if !readSuccess {
+            if let genErr = "AutoFarm".withCString({ rp_pairing_file_generate($0, &pairingHandle) }) {
+                idevice_error_free(genErr)
+                return pairingRead
+            }
+            guard let handle = pairingHandle else { return pairingRead }
+            let savePath = pairingPath.isEmpty ? PairingStore.shared.pairingPath : pairingPath
+            _ = savePath.withCString { rp_pairing_file_write(handle, $0) }
+        }
+
         guard let pairingHandle else { return pairingRead }
         defer { rp_pairing_file_free(pairingHandle) }
 
@@ -124,7 +141,7 @@ enum LocationEngine {
                 tunnel_create_rppairing(
                     $0,
                     socklen_t(MemoryLayout<sockaddr_in>.stride),
-                    "LocusLocation",
+                    "AutoFarm",
                     pairingHandle,
                     nil,
                     nil,
@@ -144,6 +161,9 @@ enum LocationEngine {
             cleanup()
             return remoteServerCode
         }
+        // 連線成功後儲存更新後的配對資料
+        let savePath = pairingPath.isEmpty ? PairingStore.shared.pairingPath : pairingPath
+        _ = savePath.withCString { rp_pairing_file_write(pairingHandle, $0) }
 
         if let simError = location_simulation_new(remoteServer, &locationSimulation) {
             idevice_error_free(simError)

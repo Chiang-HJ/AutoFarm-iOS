@@ -399,7 +399,7 @@ public final class AutoFarmSession: ObservableObject {
 
     private func pushCurrentLocation() {
         guard !pairingFilePath.isEmpty else {
-            // No pairing path configured yet, simulation is pending
+            showToast("尚未選定配對憑證，請至右上角設定選取")
             return
         }
         let result = LocationEngine.set(
@@ -413,6 +413,8 @@ public final class AutoFarmSession: ObservableObject {
             case .success:
                 self.isSimulatingLocation = true
             case .failure(let err):
+                self.isSimulatingLocation = false
+                self.showToast("定位失敗: \(err.localizedDescription)")
                 print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
             }
         }

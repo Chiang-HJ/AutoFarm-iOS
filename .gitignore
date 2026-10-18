@@ -1,0 +1,10 @@
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+build/
+DerivedData/
+*.ipa
+Payload/
+Vendor/idevice/libidevice_ffi.a
+.idea/
+xcuserdata/

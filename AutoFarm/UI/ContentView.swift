@@ -10,7 +10,7 @@ public struct ContentView: View {
     @State private var isSharePresented: Bool = false
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
-    @State private var isMushroomHelperPresented: Bool = false
+    @State private var isBlockedMushroomPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -116,7 +116,7 @@ public struct ContentView: View {
                         // 卡菇助手
                         Button(action: {
                             hideKeyboard()
-                            self.isMushroomHelperPresented = true
+                            self.isBlockedMushroomPresented = true
                         }) {
                             Image(systemName: "camera.viewfinder")
                                 .font(.system(size: 18))
@@ -183,8 +183,8 @@ public struct ContentView: View {
         .sheet(isPresented: $isSettingsPresented) {
             SettingsSheet()
         }
-        .sheet(isPresented: $isMushroomHelperPresented) {
-            MushroomHelperView()
+        .sheet(isPresented: $isBlockedMushroomPresented) {
+            BlockedMushroomView()
         }
     }
 

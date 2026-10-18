@@ -114,7 +114,8 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>localdevvpn</string>
-		<string>pikmin</string>
+		<string>pikminbloom</string>
+		<string>com.nianticlabs.pikmin</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

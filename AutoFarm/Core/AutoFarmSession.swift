@@ -130,6 +130,7 @@ public final class AutoFarmSession: ObservableObject {
 
         pushCurrentLocation()
         ensureEngineRunning()
+        SavedDatabaseStore.shared.addLinearRouteHistory(name: name, basePoints: basePoints, loops: loops, mode: mode)
         showToast("已開始路線【\(name)】")
     }
 
@@ -154,6 +155,7 @@ public final class AutoFarmSession: ObservableObject {
 
         pushCurrentLocation()
         ensureEngineRunning()
+        SavedDatabaseStore.shared.addFlowerRouteHistory(name: name, basePoints: basePoints, loops: loops, settings: settings)
         showToast("已啟動繞圈種花 (\(self.routePoints.count) 點)")
     }
 
@@ -178,6 +180,7 @@ public final class AutoFarmSession: ObservableObject {
 
         pushCurrentLocation()
         ensureEngineRunning()
+        SavedDatabaseStore.shared.addFruitRouteHistory(name: name, basePoints: basePoints, loops: loops, walkDistance: walkDistance)
         showToast("已啟動跳收果實模式")
     }
 
@@ -205,7 +208,42 @@ public final class AutoFarmSession: ObservableObject {
 
         pushCurrentLocation()
         ensureEngineRunning()
+        SavedDatabaseStore.shared.addConcentricRouteHistory(centerLat: centerLat, centerLng: centerLng, radius: radius, step: step, mode: mode)
         showToast("已啟動同心圓種花 (\(nodes.count) 點，無限循環)")
+    }
+
+    /// 執行指定歷史紀錄項目 (支援單點瞬移、直線循跡、繞圈種花、跳收果實、同心圓)
+    public func executeHistoryItem(_ item: LocationHistoryItem) {
+        switch item.type {
+        case .teleport:
+            teleport(to: item.latitude, lng: item.longitude, label: item.title)
+        case .linearRoute:
+            if let pts = item.routeNodes, !pts.isEmpty {
+                startLinearRoute(name: item.title, basePoints: pts, loops: item.loops, mode: item.loopMode)
+            } else {
+                teleport(to: item.latitude, lng: item.longitude, label: item.title)
+            }
+        case .flowerRoute:
+            if let pts = item.routeNodes, !pts.isEmpty {
+                startFlowerRoute(name: item.title, basePoints: pts, loops: item.loops, settings: item.flowerSettings ?? MultiFlowerSettings())
+            } else {
+                teleport(to: item.latitude, lng: item.longitude, label: item.title)
+            }
+        case .fruitRoute:
+            if let pts = item.routeNodes, !pts.isEmpty {
+                startFruitRoute(name: item.title, basePoints: pts, loops: item.loops, walkDistance: item.fruitWalkDistance)
+            } else {
+                teleport(to: item.latitude, lng: item.longitude, label: item.title)
+            }
+        case .concentricRoute:
+            startConcentricFlower(
+                centerLat: item.latitude,
+                centerLng: item.longitude,
+                radius: item.concentricRadius,
+                step: item.concentricStep,
+                mode: item.concentricMode
+            )
+        }
     }
 
     /// 暫停 / 繼續切換 (方案 A: 若有臨時瞬移插隊，按繼續自動瞬移回離開點接續巡航)

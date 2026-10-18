@@ -40,7 +40,7 @@ public struct DatabaseSheet: View {
                 Picker("資料庫類別", selection: $selectedTab) {
                     Text("座標 (\(db.savedLocations.count))").tag(0)
                     Text("路線 (\(db.savedRoutes.count))").tag(1)
-                    Text("瞬移紀錄 (\(db.teleportHistory.count))").tag(2)
+                    Text("歷史紀錄 (\(db.locationHistory.count))").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
@@ -51,7 +51,7 @@ public struct DatabaseSheet: View {
                 } else if selectedTab == 1 {
                     routesView
                 } else {
-                    teleportHistoryView
+                    locationHistoryView
                 }
             }
             .navigationTitle("座標與路徑資料庫")
@@ -299,17 +299,17 @@ public struct DatabaseSheet: View {
         }
     }
 
-    // MARK: - 瞬移歷史紀錄視圖
-    private var teleportHistoryView: some View {
+    // MARK: - 全方位歷史紀錄視圖 (點擊直接以該參數執行瞬移或路線)
+    private var locationHistoryView: some View {
         VStack(spacing: 0) {
-            if !db.teleportHistory.isEmpty {
+            if !db.locationHistory.isEmpty {
                 HStack {
-                    Text("共 \(db.teleportHistory.count) 筆歷史紀錄")
+                    Text("共 \(db.locationHistory.count) 筆歷史紀錄")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
                     Button(action: {
-                        db.clearTeleportHistory()
+                        db.clearHistory()
                         session.toastMessage = "已清空歷史紀錄"
                     }) {
                         Text("清空紀錄")
@@ -323,41 +323,98 @@ public struct DatabaseSheet: View {
             }
 
             List {
-                if db.teleportHistory.isEmpty {
-                    Text("尚無瞬移紀錄。")
+                if db.locationHistory.isEmpty {
+                    Text("尚無歷史紀錄。執行單點瞬移或巡航路線後將自動記錄。")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(db.teleportHistory) { item in
+                    ForEach(db.locationHistory) { item in
                         Button(action: {
-                            session.teleport(to: item.latitude, lng: item.longitude, label: item.label)
+                            session.executeHistoryItem(item)
                             dismiss()
                         }) {
-                            HStack {
+                            HStack(spacing: 10) {
+                                Image(systemName: iconForHistoryItem(item))
+                                    .font(.system(size: 16))
+                                    .foregroundColor(colorForHistoryItem(item))
+                                    .frame(width: 22)
+
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack(spacing: 6) {
-                                        Text(item.label)
+                                        Text(item.type.rawValue)
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(colorForHistoryItem(item))
+                                            .cornerRadius(4)
+
+                                        Text(item.title)
                                             .font(.system(size: 14, weight: .bold))
                                             .foregroundColor(.primary)
+                                            .lineLimit(1)
+
+                                        Spacer()
+
                                         Text(item.formattedTime)
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
                                     }
-                                    Text("\(String(format: "%.6f", item.latitude)), \(String(format: "%.6f", item.longitude))")
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .foregroundColor(.secondary)
+
+                                    HStack(spacing: 6) {
+                                        Text("\(String(format: "%.6f", item.latitude)), \(String(format: "%.6f", item.longitude))")
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(.secondary)
+
+                                        if let nodes = item.routeNodes, !nodes.isEmpty {
+                                            Text("・\(nodes.count) 點")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        if item.loops > 0 {
+                                            Text("・\(item.loops) 圈")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
                                 }
+
                                 Spacer()
-                                Text("瞬移")
+
+                                Text(item.type == .teleport ? "瞬移" : "執行")
                                     .font(.caption)
                                     .fontWeight(.bold)
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(colorForHistoryItem(item))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(colorForHistoryItem(item).opacity(0.12))
+                                    .cornerRadius(6)
                             }
                         }
                     }
                 }
             }
             .listStyle(.insetGrouped)
+        }
+    }
+
+    private func iconForHistoryItem(_ item: LocationHistoryItem) -> String {
+        switch item.type {
+        case .teleport: return "location.fill"
+        case .linearRoute: return "point.topleft.down.curvedto.point.bottomright.up"
+        case .flowerRoute: return "camera.macro"
+        case .fruitRoute: return "figure.walk"
+        case .concentricRoute: return "circle.circle"
+        }
+    }
+
+    private func colorForHistoryItem(_ item: LocationHistoryItem) -> Color {
+        switch item.type {
+        case .teleport: return .blue
+        case .linearRoute: return .purple
+        case .flowerRoute: return .orange
+        case .fruitRoute: return .green
+        case .concentricRoute: return .indigo
         }
     }
 

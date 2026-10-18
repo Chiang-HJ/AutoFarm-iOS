@@ -75,11 +75,11 @@ public struct ControlDrawerView: View {
             // 展開時顯示資料庫內容
             if isExpanded {
                 VStack(spacing: 10) {
-                    // 三分類選擇器 (座標資料庫 / 路徑資料庫 / 瞬移紀錄)
+                    // 三分類選擇器 (座標資料庫 / 路徑資料庫 / 歷史紀錄)
                     Picker("資料庫類別", selection: $selectedTab) {
                         Text("座標 (\(db.savedLocations.count))").tag(0)
                         Text("路線 (\(db.savedRoutes.count))").tag(1)
-                        Text("瞬移紀錄 (\(db.teleportHistory.count))").tag(2)
+                        Text("歷史紀錄 (\(db.locationHistory.count))").tag(2)
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal, 16)
@@ -89,7 +89,7 @@ public struct ControlDrawerView: View {
                     } else if selectedTab == 1 {
                         routesSection
                     } else {
-                        teleportHistorySection
+                        locationHistorySection
                     }
                 }
                 .transition(.opacity)
@@ -832,22 +832,22 @@ public struct ControlDrawerView: View {
         }
     }
 
-    // MARK: - 瞬移歷史紀錄視圖 (支援點擊直接瞬移、清空歷史紀錄)
-    private var teleportHistorySection: some View {
+    // MARK: - 全功能歷史紀錄視圖 (支援單點瞬移、直線、種花、跳果實、同心圓，點擊直接執行)
+    private var locationHistorySection: some View {
         VStack(spacing: 6) {
             // 工具列：清空按鈕與筆數統計
             HStack {
-                Text("共 \(db.teleportHistory.count) 筆瞬移定位紀錄")
+                Text("共 \(db.locationHistory.count) 筆歷史紀錄")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
 
                 Spacer()
 
-                if !db.teleportHistory.isEmpty {
+                if !db.locationHistory.isEmpty {
                     Button(action: {
                         hideKeyboard()
-                        db.clearTeleportHistory()
-                        session.toastMessage = "已清空瞬移歷史紀錄"
+                        db.clearHistory()
+                        session.toastMessage = "已清空歷史紀錄"
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "trash")
@@ -867,45 +867,71 @@ public struct ControlDrawerView: View {
             // 紀錄清單
             ScrollView {
                 LazyVStack(spacing: 6) {
-                    if db.teleportHistory.isEmpty {
-                        Text("目前尚無瞬移紀錄。在搜尋欄輸入座標或於資料庫點擊瞬移時，系統將自動記錄於此。")
+                    if db.locationHistory.isEmpty {
+                        Text("目前尚無定位或路線紀錄。執行單點瞬移或各類巡航路線時，系統將自動記錄於此。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .padding(.vertical, 24)
                     } else {
-                        ForEach(db.teleportHistory) { item in
+                        ForEach(db.locationHistory) { item in
                             Button(action: {
                                 hideKeyboard()
-                                session.teleport(to: item.latitude, lng: item.longitude, label: item.label)
+                                session.executeHistoryItem(item)
                             }) {
                                 HStack(spacing: 8) {
-                                    Image(systemName: "clock.arrow.circlepath")
-                                        .font(.system(size: 18))
-                                        .foregroundColor(.blue)
+                                    Image(systemName: iconForHistoryItem(item))
+                                        .font(.system(size: 16))
+                                        .foregroundColor(colorForHistoryItem(item))
+                                        .frame(width: 22)
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         HStack(spacing: 6) {
-                                            Text(item.label)
+                                            Text(item.type.rawValue)
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(colorForHistoryItem(item))
+                                                .cornerRadius(4)
+
+                                            Text(item.title)
                                                 .font(.system(size: 13, weight: .bold))
                                                 .foregroundColor(.primary)
+                                                .lineLimit(1)
+
+                                            Spacer()
+
                                             Text(item.formattedTime)
                                                 .font(.system(size: 10))
                                                 .foregroundColor(.secondary)
                                         }
 
-                                        Text("\(String(format: "%.6f", item.latitude)), \(String(format: "%.6f", item.longitude))")
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundColor(.secondary)
+                                        HStack(spacing: 6) {
+                                            Text("\(String(format: "%.6f", item.latitude)), \(String(format: "%.6f", item.longitude))")
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundColor(.secondary)
+
+                                            if let nodes = item.routeNodes, !nodes.isEmpty {
+                                                Text("・\(nodes.count) 點")
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            if item.loops > 0 {
+                                                Text("・\(item.loops) 圈")
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
                                     }
 
                                     Spacer()
 
-                                    Text("瞬移")
+                                    Text(item.type == .teleport ? "瞬移" : "執行")
                                         .font(.system(size: 11, weight: .bold))
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(colorForHistoryItem(item))
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color.blue.opacity(0.1))
+                                        .background(colorForHistoryItem(item).opacity(0.12))
                                         .cornerRadius(6)
                                 }
                                 .padding(.horizontal, 12)
@@ -919,6 +945,26 @@ public struct ControlDrawerView: View {
                 .padding(.horizontal, 16)
             }
             .frame(maxHeight: 220)
+        }
+    }
+
+    private func iconForHistoryItem(_ item: LocationHistoryItem) -> String {
+        switch item.type {
+        case .teleport: return "location.fill"
+        case .linearRoute: return "point.topleft.down.curvedto.point.bottomright.up"
+        case .flowerRoute: return "camera.macro"
+        case .fruitRoute: return "figure.walk"
+        case .concentricRoute: return "circle.circle"
+        }
+    }
+
+    private func colorForHistoryItem(_ item: LocationHistoryItem) -> Color {
+        switch item.type {
+        case .teleport: return .blue
+        case .linearRoute: return .purple
+        case .flowerRoute: return .orange
+        case .fruitRoute: return .green
+        case .concentricRoute: return .indigo
         }
     }
 

@@ -1,22 +1,16 @@
-name: Build iOS IPA (Unsigned)
+name: Build Unsigned iOS IPA
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-15
-
+    runs-on: macos-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Check Xcode Version
-        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -31,42 +25,29 @@ jobs:
       - name: Generate Xcode Project
         run: xcodegen generate
 
-      - name: Build App (Unsigned)
+      - name: Build Unsigned App with xcodebuild
         run: |
-          set -o pipefail
-          xcodebuild \
+          xcodebuild build \
             -project AutoFarmGPS.xcodeproj \
             -scheme AutoFarmGPS \
             -configuration Release \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath build \
+            -sdk iphoneos \
+            -arch arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            build | tee xcodebuild.log
+            SYMROOT=$PWD/build
 
-      - name: Package Unsigned IPA
+      - name: Package into IPA
         run: |
           mkdir -p Payload
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
-          echo "Found compiled app at: $APP_PATH"
-          cp -r "$APP_PATH" Payload/
-          zip -qr AutoFarm-iOS-unsigned.ipa Payload
+          cp -r build/Release-iphoneos/*.app Payload/
+          zip -qr AutoFarm-iOS.ipa Payload
           rm -rf Payload
-          ls -lh AutoFarm-iOS-unsigned.ipa
+          ls -lh AutoFarm-iOS.ipa
 
-      - name: Upload IPA Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AutoFarm-iOS-unsigned
-          path: AutoFarm-iOS-unsigned.ipa
-          retention-days: 7
-
-      - name: Upload Build Log on Failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-failure-log
-          path: xcodebuild.log
-          retention-days: 7
+          name: AutoFarm-iOS-ipa
+          path: AutoFarm-iOS.ipa

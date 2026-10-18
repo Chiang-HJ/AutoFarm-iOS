@@ -3,7 +3,6 @@ options:
   bundleIdPrefix: com.autofarm
   deploymentTarget:
     iOS: "17.0"
-  xcodeVersion: "16.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -19,6 +18,7 @@ targets:
       - path: AutoFarm
         excludes:
           - "**/Info.plist"
+          - "**/*.entitlements"
       - path: Vendor/idevice/module.modulemap
         buildPhase: none
       - path: Vendor/idevice/idevice.h

@@ -106,6 +106,10 @@ public struct LocationHistoryItem: Identifiable, Codable, Equatable {
         return df.string(from: timestamp)
     }
 
+    public static func == (lhs: LocationHistoryItem, rhs: LocationHistoryItem) -> Bool {
+        lhs.id == rhs.id
+    }
+
     public init(
         id: UUID = UUID(),
         type: HistoryActionType,

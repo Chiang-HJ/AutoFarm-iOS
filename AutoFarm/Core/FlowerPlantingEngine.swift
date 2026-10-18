@@ -13,7 +13,7 @@ public enum ConcentricMode: String, Codable, CaseIterable {
     }
 }
 
-public struct FlowerCircleConfig: Codable {
+public struct FlowerCircleConfig: Codable, Equatable {
     public var radius: Double = 28.0
     public var loops: Double = 1.0
     public var waitBeforeSec: Int = 1
@@ -29,7 +29,7 @@ public struct FlowerCircleConfig: Codable {
 
 public typealias FlowerCircleParam = FlowerCircleConfig
 
-public struct MultiFlowerSettings: Codable {
+public struct MultiFlowerSettings: Codable, Equatable {
     public var flowerTeleport: Bool = true
     public var enableCircle2: Bool = true
     public var flowerJitter: Bool = true

@@ -9,6 +9,8 @@ public struct SettingsSheet: View {
     @State private var isTesting: Bool = false
     @State private var testResultText: String? = nil
     @State private var isSuccess: Bool = false
+    @State private var isShowingFilePicker: Bool = false
+    @State private var importStatusMessage: String? = nil
 
     public init() {}
 
@@ -23,7 +25,7 @@ public struct SettingsSheet: View {
                                 HStack {
                                     Image(systemName: "checkmark.seal.fill")
                                         .foregroundColor(.green)
-                                    Text("已存在信任憑證文件")
+                                    Text("已存在信任憑證文件 (RPPairing)")
                                         .font(.subheadline)
                                         .fontWeight(.semibold)
                                         .foregroundColor(.green)
@@ -37,6 +39,43 @@ public struct SettingsSheet: View {
                                     Image(systemName: "key.fill")
                                     Text(pairingStore.hasPairingFile ? "重新進行手機配對" : "開始手機免電腦配對")
                                         .fontWeight(.bold)
+                                }
+                            }
+
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("或使用電腦生成的 RPPairing 憑證 (iOS 18 推薦)：")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                HStack {
+                                    Button(action: pastePairingFromClipboard) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "doc.on.clipboard")
+                                            Text("剪貼簿貼上憑證")
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .font(.footnote)
+
+                                    Spacer()
+
+                                    Button(action: { isShowingFilePicker = true }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "folder")
+                                            Text("匯入配對檔案")
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .font(.footnote)
+                                }
+
+                                if let msg = importStatusMessage {
+                                    Text(msg)
+                                        .font(.caption2)
+                                        .foregroundColor(msg.contains("成功") ? .green : .red)
+                                        .padding(.top, 2)
                                 }
                             }
 
@@ -137,7 +176,7 @@ public struct SettingsSheet: View {
 
                         Divider()
 
-                        Text("配對標準步驟（只需做一次，永久信任）：\n1. 確認手機連上 Wi-Fi，且已開啟「開發者模式」。\n2. 點擊上方【開始手機免電腦配對】。\n3. 切換至 iPhone「設定 → 隱私權與安全性 → 開發者模式」。\n4. 在最下方配對裝置點選【AutoFarm】，輸入手機螢幕鎖定密碼。\n5. 螢幕頂部通知（或切回此處）會顯示「6 位數驗證碼」，在系統框輸入該碼即完成配對！\n6. 配對完成後，連上 LocalDevVPN 即可暢通連線！")
+                        Text("配對流程指引：\n• iOS 17 免電腦：點擊【開始手機免電腦配對】，切換到「設定 → 開發者模式」點選 AutoFarm 並輸入解鎖密碼，再填入彈出的 6 位數碼即可。\n• iOS 18 或若開發者模式僅顯示配對裝置：請在電腦上執行 idevice_pair.exe 產出 RPPairing 憑證，並在此點擊【剪貼簿貼上憑證】即可一次搞定！")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -187,6 +226,33 @@ public struct SettingsSheet: View {
             }
             .navigationTitle("連線設定")
             .navigationBarItems(trailing: Button("完成") { dismiss() })
+            .fileImporter(
+                isPresented: $isShowingFilePicker,
+                allowedContentTypes: PairingStore.supportedTypes,
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    do {
+                        try pairingStore.importPairing(from: url)
+                        importStatusMessage = "成功匯入 RPPairing 憑證！"
+                    } catch {
+                        importStatusMessage = "匯入失敗: \(error.localizedDescription)"
+                    }
+                case .failure(let err):
+                    importStatusMessage = "選取檔案失敗: \(err.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func pastePairingFromClipboard() {
+        do {
+            try pairingStore.importPairingFromClipboard()
+            importStatusMessage = "已成功從剪貼簿匯入 RPPairing 憑證！"
+        } catch {
+            importStatusMessage = "貼上失敗: \(error.localizedDescription)"
         }
     }
 

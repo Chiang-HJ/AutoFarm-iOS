@@ -17,6 +17,10 @@ public struct ContentView: View {
     @State private var isSavingCoordNamePrompt: Bool = false
     @State private var saveCoordNameInput: String = ""
 
+    // 自由拖曳虛擬搖桿開關位置
+    @State private var joystickPositionOffset: CGSize = .zero
+    @GestureState private var joystickDragOffset: CGSize = .zero
+
     public init() {}
 
     public var body: some View {
@@ -36,65 +40,56 @@ public struct ContentView: View {
             )
             .edgesIgnoringSafeArea(.all)
 
-            // 2. 介面階梯浮層
+            // 2. 主介面浮層
             VStack(spacing: 0) {
-                // 頂部多功能工具列
+                // 頂部多功能精簡工具列 (待命狀態乾淨俐落)
                 topActionBar
                     .padding(.horizontal, 12)
                     .padding(.top, 44) // 避開 Dynamic Island / 狀態列
 
                 // 狀態懸浮 HUD 膠囊
                 StatusHUDView()
-                    .padding(.top, 8)
+                    .padding(.top, 6)
 
                 Spacer()
 
-                // 下層操作區：左側搖桿開關與虛擬搖桿 + 右側「目前位置快捷鈕」
-                HStack(alignment: .bottom, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if session.isJoystickEnabled {
-                            VirtualJoystickView()
-                                .transition(.scale.combined(with: .opacity))
-                        }
-
-                        // 搖桿開關切換鈕
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                session.isJoystickEnabled.toggle()
-                            }
-                        }) {
-                            Image(systemName: session.isJoystickEnabled ? "gamecontroller.fill" : "gamecontroller")
-                                .font(.system(size: 18))
-                                .foregroundColor(session.isJoystickEnabled ? .white : .blue)
-                                .frame(width: 44, height: 44)
-                                .background(session.isJoystickEnabled ? Color.blue : Color(UIColor.secondarySystemBackground).opacity(0.92))
-                                .clipShape(Circle())
-                                .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
-                        }
-                    }
-                    .padding(.leading, 16)
-                    .padding(.bottom, 12)
-
+                // 地圖右側獨立懸浮功能按鈕群
+                HStack {
                     Spacer()
+                    VStack(spacing: 12) {
+                        // 視角平滑置中至目前定位 (相機順移回角色當前位置)
+                        Button(action: {
+                            session.centerCameraOnCurrentLocation()
+                        }) {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(.blue)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+                        }
 
-                    // 定位至自己位置並觸發單點選單
-                    Button(action: {
-                        self.saveCoordNameInput = ""
-                        self.isSavingCoordNamePrompt = false
-                        self.selectedSingleCoord = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
-                    }) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(.blue)
-                            .frame(width: 44, height: 44)
-                            .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                            .clipShape(Circle())
-                            .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
+                        // 目前位置單點選單
+                        Button(action: {
+                            self.saveCoordNameInput = ""
+                            self.isSavingCoordNamePrompt = false
+                            self.selectedSingleCoord = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
+                        }) {
+                            Image(systemName: "mappin.and.ellipse")
+                                .font(.system(size: 18))
+                                .foregroundColor(.purple)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+                        }
                     }
                     .padding(.trailing, 16)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 10)
                 }
 
+                // 底部控制抽屜 (平時待命速度設定 + 資料庫；運行時平移安卓懸浮球)
                 ControlDrawerView(
                     onOpenShare: { isSharePresented = true },
                     onOpenSettings: { isSettingsPresented = true }
@@ -102,12 +97,15 @@ public struct ContentView: View {
             }
             .edgesIgnoringSafeArea(.bottom)
 
-            // 單點多功能互動卡片 (長按或點選目前位置)
+            // 3. 可全螢幕任意自由拖曳位置的虛擬搖桿開關與方向盤
+            draggableJoystickView
+
+            // 4. 單點多功能互動卡片 (長按或點選目前位置)
             if let coord = selectedSingleCoord {
                 singlePointActionOverlay(coord: coord)
             }
 
-            // 啟動時偵測到未完成進度之提示視窗
+            // 5. 啟動時偵測到未完成進度之提示視窗
             if let resume = pendingResumeProgress {
                 Color.black.opacity(0.4).edgesIgnoringSafeArea(.all)
                 ResumeProgressSheet(
@@ -140,7 +138,54 @@ public struct ContentView: View {
         }
     }
 
-    // MARK: - 頂部工具列
+    // MARK: - 可自由拖曳位置的虛擬搖桿組件
+    private var draggableJoystickView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if session.isJoystickEnabled {
+                VirtualJoystickView()
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            // 獨立搖桿開關按鈕 (支援全螢幕拖曳)
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    session.isJoystickEnabled.toggle()
+                }
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: session.isJoystickEnabled ? "gamecontroller.fill" : "gamecontroller")
+                        .font(.system(size: 18))
+                    if !session.isJoystickEnabled {
+                        Text("搖桿")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                }
+                .foregroundColor(session.isJoystickEnabled ? .white : .blue)
+                .frame(minWidth: 44, minHeight: 44)
+                .padding(.horizontal, session.isJoystickEnabled ? 0 : 8)
+                .background(session.isJoystickEnabled ? Color.blue : Color(UIColor.secondarySystemBackground).opacity(0.92))
+                .clipShape(Capsule())
+                .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 2)
+            }
+            .gesture(
+                DragGesture()
+                    .updating($joystickDragOffset) { value, state, _ in
+                        state = value.translation
+                    }
+                    .onEnded { value in
+                        joystickPositionOffset.width += value.translation.width
+                        joystickPositionOffset.height += value.translation.height
+                    }
+            )
+        }
+        .offset(
+            x: joystickPositionOffset.width + joystickDragOffset.width,
+            y: joystickPositionOffset.height + joystickDragOffset.height
+        )
+        .position(x: 70, y: 550)
+    }
+
+    // MARK: - 頂部工具列 (平時待命狀態專用，保持乾淨)
     private var topActionBar: some View {
         HStack(spacing: 8) {
             // 座標與搜尋輸入
@@ -170,52 +215,22 @@ public struct ContentView: View {
                 .fill(session.isSimulatingLocation ? Color.blue : Color.green)
                 .frame(width: 10, height: 10)
 
-            // 座標與路徑資料庫 (Database)
+            // 座標與路徑資料庫
             Button(action: { isDatabasePresented = true }) {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.blue)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 34, height: 34)
                     .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
                     .cornerRadius(8)
             }
 
-            // 路線中心定位 (FilterCenterFocus)
-            Button(action: { session.centerOnRoute() }) {
-                Image(systemName: "scope")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.purple)
-                    .frame(width: 32, height: 32)
-                    .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                    .cornerRadius(8)
-            }
-
-            // 暫存進度 (Save Progress)
-            Button(action: { session.saveProgress() }) {
-                Image(systemName: "square.and.arrow.down.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(.blue)
-                    .frame(width: 32, height: 32)
-                    .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                    .cornerRadius(8)
-            }
-
-            // 分享路線 (Share)
-            Button(action: { isSharePresented = true }) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 14))
-                    .foregroundColor(.primary)
-                    .frame(width: 32, height: 32)
-                    .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                    .cornerRadius(8)
-            }
-
-            // 設定與配對
+            // 連線與憑證設定
             Button(action: { isSettingsPresented = true }) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 14))
                     .foregroundColor(.primary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 34, height: 34)
                     .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
                     .cornerRadius(8)
             }

@@ -24,8 +24,20 @@ public struct ControlDrawerView: View {
     @State private var newLocLat: String = ""
     @State private var newLocLng: String = ""
 
-    // 路線模式選擇 ActionSheet
-    @State private var selectedRouteForMode: SavedRoute? = nil
+    // 路線模式參數設定 Sheet
+    @State private var selectedRouteForConfig: SavedRoute? = nil
+
+    // 路線分享 Sheet
+    @State private var routeToShare: SavedRoute? = nil
+    @State private var isRouteSharePresented: Bool = false
+
+    // 運行中動態切換路徑/座標之確認對話盒
+    @State private var isSwitchConfirmPresented: Bool = false
+    @State private var pendingTargetLocation: SavedLocation? = nil
+    @State private var pendingTargetRoute: SavedRoute? = nil
+
+    // 獨立速度文字輸入狀態
+    @State private var speedInputText: String = "18"
 
     var onOpenShare: () -> Void
     var onOpenSettings: () -> Void
@@ -37,12 +49,15 @@ public struct ControlDrawerView: View {
 
     public var body: some View {
         VStack(spacing: 8) {
-            // 頂部抓把與收合切換列
+            // 頂部抓把與抽屜標題列
             drawerHeader
 
-            // 當有路線正在執行中：顯示巡航運行控制卡
+            // 運行中巡航卡片 (對齊安卓懸浮球功能按鍵)
             if !session.routePoints.isEmpty {
                 activeRouteControlCard
+            } else {
+                // 平時待命時的獨立速度調整區塊
+                idleSpeedControlSection
             }
 
             // 展開時顯示資料庫內容
@@ -90,12 +105,27 @@ public struct ControlDrawerView: View {
         .sheet(isPresented: $isAddLocationPresented) {
             addLocationSheet
         }
-        .actionSheet(item: $selectedRouteForMode) { route in
-            routeModeActionSheet(for: route)
+        .sheet(item: $selectedRouteForConfig) { route in
+            RouteModeConfigSheet(route: route) { mode, loopMode, loops, flowerSettings, fruitWalkDist in
+                executeSelectedRoute(route: route, mode: mode, loopMode: loopMode, loops: loops, flowerSettings: flowerSettings, fruitWalkDist: fruitWalkDist)
+            }
+        }
+        .sheet(isPresented: $isRouteSharePresented) {
+            if let r = routeToShare {
+                SingleRouteShareSheet(route: r)
+            } else {
+                RouteShareView()
+            }
+        }
+        .alert(isPresented: $isSwitchConfirmPresented) {
+            switchConfirmationAlert
+        }
+        .onAppear {
+            speedInputText = String(format: "%.1f", session.speedKmh)
         }
     }
 
-    // MARK: - 抽屜頂部把手與快捷列
+    // MARK: - 抽屜頂部把手與標題列
     private var drawerHeader: some View {
         VStack(spacing: 6) {
             Capsule()
@@ -105,7 +135,7 @@ public struct ControlDrawerView: View {
 
             HStack {
                 HStack(spacing: 6) {
-                    Image(systemName: "cylinder.split.1x2.fill")
+                    Image(systemName: "folder.fill")
                         .foregroundColor(.blue)
                         .font(.system(size: 14))
                     Text(selectedTab == 0 ? "座標資料庫" : "路徑資料庫")
@@ -113,25 +143,6 @@ public struct ControlDrawerView: View {
                 }
 
                 Spacer()
-
-                // 搖桿開關按鈕
-                Button(action: {
-                    withAnimation(.spring()) {
-                        session.isJoystickEnabled.toggle()
-                    }
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: session.isJoystickEnabled ? "gamecontroller.fill" : "gamecontroller")
-                            .font(.system(size: 12))
-                        Text(session.isJoystickEnabled ? "搖桿開" : "搖桿關")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(session.isJoystickEnabled ? Color.blue.opacity(0.15) : Color.gray.opacity(0.15))
-                    .foregroundColor(session.isJoystickEnabled ? .blue : .secondary)
-                    .cornerRadius(8)
-                }
 
                 // 設定按鈕
                 Button(action: onOpenSettings) {
@@ -161,65 +172,269 @@ public struct ControlDrawerView: View {
         }
     }
 
-    // MARK: - 運行中巡航控制卡片
+    // MARK: - 平時待命時的獨立速度調整區塊
+    private var idleSpeedControlSection: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "gauge.with.needle")
+                    .foregroundColor(.blue)
+                    .font(.system(size: 14))
+                Text("移動時速:")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            // 純數字輸入框
+            HStack(spacing: 4) {
+                TextField("18.0", text: $speedInputText, onCommit: commitSpeedInput)
+                    .keyboardType(.decimalPad)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 60)
+                    .padding(.vertical, 4)
+                    .background(Color(UIColor.tertiarySystemBackground))
+                    .cornerRadius(6)
+
+                Text("km/h")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            // 常用時速快捷切換
+            HStack(spacing: 6) {
+                speedQuickButton(value: 9.0, label: "9")
+                speedQuickButton(value: 18.0, label: "18")
+                speedQuickButton(value: 24.0, label: "24")
+                speedQuickButton(value: 36.0, label: "36")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color(UIColor.secondarySystemBackground).opacity(0.8))
+        .cornerRadius(12)
+        .padding(.horizontal, 16)
+    }
+
+    private func speedQuickButton(value: Double, label: String) -> some View {
+        Button(action: {
+            session.speedKmh = value
+            speedInputText = String(format: "%.0f", value)
+        }) {
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(abs(session.speedKmh - value) < 0.1 ? .white : .primary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(abs(session.speedKmh - value) < 0.1 ? Color.blue : Color(UIColor.tertiarySystemBackground))
+                .cornerRadius(6)
+        }
+    }
+
+    private func commitSpeedInput() {
+        if let val = Double(speedInputText), val > 0 {
+            session.speedKmh = min(max(val, 0.5), 120.0)
+            speedInputText = String(format: "%.1f", session.speedKmh)
+        } else {
+            speedInputText = String(format: "%.1f", session.speedKmh)
+        }
+    }
+
+    // MARK: - 運行中巡航卡片 (完全對齊安卓懸浮球按鍵)
     private var activeRouteControlCard: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
+            // 1. 路線資訊列
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
                         Circle()
-                            .fill(Color.green)
+                            .fill(session.isRoutePaused ? Color.orange : Color.green)
                             .frame(width: 8, height: 8)
                         Text(session.activeRouteName)
                             .font(.system(size: 14, weight: .bold))
                             .lineLimit(1)
+                        Text(session.isRoutePaused ? "(已暫停)" : "(運行中)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(session.isRoutePaused ? .orange : .green)
                     }
-                    Text("航點 \(session.currentRouteIndex + 1)/\(session.routePoints.count) | 循環 \(session.routeCurrentLoop) 圈 | 預計 \(session.etaString)")
+
+                    Text("航點 \(session.currentRouteIndex + 1)/\(session.routePoints.count) | 循環第 \(session.routeCurrentLoop + 1) 圈 | 預計 \(session.etaString)")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
+
                 Spacer()
 
+                // 即時時速輸入框
+                HStack(spacing: 3) {
+                    TextField("18", text: $speedInputText, onCommit: commitSpeedInput)
+                        .keyboardType(.decimalPad)
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 48)
+                        .padding(.vertical, 3)
+                        .background(Color(UIColor.tertiarySystemBackground))
+                        .cornerRadius(6)
+                    Text("km/h")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Divider()
+
+            // 2. 安卓懸浮球功能按鈕陣列
+            // 第一排：暫停/繼續、上一點、下一點、路線中心、暫存進度
+            HStack(spacing: 8) {
                 // 暫停 / 繼續
                 Button(action: { session.toggleRoutePause() }) {
-                    HStack(spacing: 4) {
+                    VStack(spacing: 3) {
                         Image(systemName: session.isRoutePaused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 15))
                         Text(session.isRoutePaused ? "繼續" : "暫停")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
                     .background(session.isRoutePaused ? Color.green : Color.orange)
                     .foregroundColor(.white)
                     .cornerRadius(8)
                 }
 
-                // 停止巡航
-                Button(action: { session.stopRoute() }) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.red.opacity(0.15))
-                        .foregroundColor(.red)
-                        .cornerRadius(8)
+                // 上一點
+                Button(action: { session.prevRoutePoint() }) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "backward.end.fill")
+                            .font(.system(size: 14))
+                        Text("上一點")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color(UIColor.tertiarySystemBackground))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+
+                // 下一點
+                Button(action: { session.nextRoutePoint() }) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "forward.end.fill")
+                            .font(.system(size: 14))
+                        Text("下一點")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color(UIColor.tertiarySystemBackground))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+
+                // 路線中心 (自動暫停並瞬移中心)
+                Button(action: { session.centerOnRoute() }) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "scope")
+                            .font(.system(size: 14))
+                        Text("路線中心")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.purple.opacity(0.15))
+                    .foregroundColor(.purple)
+                    .cornerRadius(8)
+                }
+
+                // 暫存進度
+                Button(action: { session.saveProgress() }) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "square.and.arrow.down.fill")
+                            .font(.system(size: 14))
+                        Text("暫存進度")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.blue.opacity(0.15))
+                    .foregroundColor(.blue)
+                    .cornerRadius(8)
                 }
             }
 
-            // 速度調整滑桿
+            // 第二排：路線全覽、分享路線、停止路線、恢復真實GPS
             HStack(spacing: 8) {
-                Image(systemName: "gauge.with.needle")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 12))
-                Slider(value: $session.speedKmh, in: 1.0...60.0, step: 0.5)
-                Text("\(String(format: "%.1f", session.speedKmh)) km/h")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .frame(width: 65, alignment: .trailing)
+                // 路線全覽
+                Button(action: { session.fitCameraToRouteBounds() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12))
+                        Text("路線全覽")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color(UIColor.tertiarySystemBackground))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+
+                // 分享路線
+                Button(action: {
+                    if let saved = db.savedRoutes.first(where: { $0.name == session.activeRouteName }) {
+                        self.routeToShare = saved
+                    } else {
+                        self.routeToShare = SavedRoute(id: UUID(), name: session.activeRouteName, nodes: session.originalBasePoints)
+                    }
+                    self.isRouteSharePresented = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 12))
+                        Text("分享路線")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.blue.opacity(0.15))
+                    .foregroundColor(.blue)
+                    .cornerRadius(8)
+                }
+
+                // 停止路線 (保留當前虛擬位置)
+                Button(action: { session.stopRoute() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 12))
+                        Text("停止路線")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.red.opacity(0.15))
+                    .foregroundColor(.red)
+                    .cornerRadius(8)
+                }
+
+                // 恢復真實 GPS (重置 locationd)
+                Button(action: { session.stopMocking() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "location.slash.fill")
+                            .font(.system(size: 12))
+                        Text("還原GPS")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.gray.opacity(0.18))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
             }
         }
-        .padding(10)
+        .padding(12)
         .background(Color(UIColor.secondarySystemBackground).opacity(0.85))
-        .cornerRadius(12)
+        .cornerRadius(14)
         .padding(.horizontal, 16)
     }
 
@@ -280,7 +495,7 @@ public struct ControlDrawerView: View {
                         ForEach(db.savedLocations) { loc in
                             HStack {
                                 Button(action: {
-                                    session.teleport(to: loc.latitude, lng: loc.longitude)
+                                    handleLocationClick(loc)
                                 }) {
                                     HStack(spacing: 10) {
                                         Image(systemName: "mappin.circle.fill")
@@ -378,8 +593,9 @@ public struct ControlDrawerView: View {
                     } else {
                         ForEach(db.savedRoutes) { route in
                             HStack {
+                                // 路線點擊設定模式
                                 Button(action: {
-                                    self.selectedRouteForMode = route
+                                    handleRouteClick(route)
                                 }) {
                                     HStack(spacing: 10) {
                                         Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
@@ -395,7 +611,7 @@ public struct ControlDrawerView: View {
                                                 .foregroundColor(.secondary)
                                         }
                                         Spacer()
-                                        Text("選擇模式 >")
+                                        Text("設定參數 >")
                                             .font(.system(size: 11, weight: .bold))
                                             .foregroundColor(.purple)
                                             .padding(.horizontal, 8)
@@ -405,6 +621,18 @@ public struct ControlDrawerView: View {
                                     }
                                 }
 
+                                // 路線專屬分享按鈕
+                                Button(action: {
+                                    self.routeToShare = route
+                                    self.isRouteSharePresented = true
+                                }) {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.blue)
+                                        .padding(6)
+                                }
+
+                                // 刪除按鈕
                                 Button(action: {
                                     db.deleteRoute(id: route.id)
                                 }) {
@@ -427,39 +655,87 @@ public struct ControlDrawerView: View {
         }
     }
 
-    // MARK: - 模式選擇 ActionSheet
-    private func routeModeActionSheet(for route: SavedRoute) -> ActionSheet {
-        ActionSheet(
-            title: Text("【\(route.name)】共 \(route.nodes.count) 點"),
-            message: Text("請選擇巡航模式立即啟動："),
-            buttons: [
-                .default(Text("直線巡航 (依序循環)")) {
-                    session.startLinearRoute(
-                        name: route.name,
-                        basePoints: route.nodes,
-                        loops: 0,
-                        mode: session.loopMode
-                    )
-                },
-                .default(Text("繞圈種花 (多花點雙圈28m/24m)")) {
-                    session.startFlowerRoute(
-                        name: route.name,
-                        basePoints: route.nodes,
-                        loops: 0,
-                        settings: session.flowerSettings
-                    )
-                },
-                .default(Text("跳收果實 (南北80m行走)")) {
-                    session.startFruitRoute(
-                        name: route.name,
-                        basePoints: route.nodes,
-                        loops: 0,
-                        walkDistance: 80.0
-                    )
-                },
-                .cancel(Text("取消"))
-            ]
+    // MARK: - 運行中切換邏輯
+    private func handleLocationClick(_ loc: SavedLocation) {
+        if !session.routePoints.isEmpty {
+            pendingTargetLocation = loc
+            pendingTargetRoute = nil
+            isSwitchConfirmPresented = true
+        } else {
+            session.teleport(to: loc.latitude, lng: loc.longitude)
+        }
+    }
+
+    private func handleRouteClick(_ route: SavedRoute) {
+        if !session.routePoints.isEmpty {
+            pendingTargetRoute = route
+            pendingTargetLocation = nil
+            isSwitchConfirmPresented = true
+        } else {
+            selectedRouteForConfig = route
+        }
+    }
+
+    private var switchConfirmationAlert: Alert {
+        Alert(
+            title: Text("正在運行路線【\(session.activeRouteName)】"),
+            message: Text("是否要切換目標？請選擇是否暫存目前進度："),
+            primaryButton: .default(Text("存檔進度並切換")) {
+                session.saveProgress()
+                applyPendingSwitch()
+            },
+            secondaryButton: .destructive(Text("直接切換 (不存檔)")) {
+                session.stopRoute()
+                applyPendingSwitch()
+            }
         )
+    }
+
+    private func applyPendingSwitch() {
+        if let loc = pendingTargetLocation {
+            session.teleport(to: loc.latitude, lng: loc.longitude)
+            session.isRoutePaused = true
+            pendingTargetLocation = nil
+        } else if let route = pendingTargetRoute {
+            selectedRouteForConfig = route
+            pendingTargetRoute = nil
+        }
+    }
+
+    // MARK: - 執行選定路線
+    private func executeSelectedRoute(
+        route: SavedRoute,
+        mode: Int,
+        loopMode: LoopMode,
+        loops: Int,
+        flowerSettings: MultiFlowerSettings,
+        fruitWalkDist: Double
+    ) {
+        switch mode {
+        case 0:
+            session.startLinearRoute(
+                name: route.name,
+                basePoints: route.nodes,
+                loops: loops,
+                mode: loopMode
+            )
+        case 1:
+            session.startFlowerRoute(
+                name: route.name,
+                basePoints: route.nodes,
+                loops: loops,
+                settings: flowerSettings
+            )
+        case 2:
+            session.startFruitRoute(
+                name: route.name,
+                basePoints: route.nodes,
+                loops: loops,
+                walkDistance: fruitWalkDist
+            )
+        default:
+            break
+        }
     }
 
     // MARK: - 檔案匯入處理
@@ -545,4 +821,22 @@ public struct ControlDrawerView: View {
             .navigationBarItems(leading: Button("取消") { isAddLocationPresented = false })
         }
     }
+}
+
+/// 單一路線原生分享 Sheet
+public struct SingleRouteShareSheet: UIViewControllerRepresentable {
+    public let route: SavedRoute
+
+    public init(route: SavedRoute) {
+        self.route = route
+    }
+
+    public func makeUIViewController(context: Context) -> UIActivityViewController {
+        let content = route.nodes.map { "\($0.lat), \($0.lng)" }.joined(separator: "\n")
+        let item = "【\(route.name)】路徑座標點位：\n\(content)"
+        let av = UIActivityViewController(activityItems: [item], applicationActivities: nil)
+        return av
+    }
+
+    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

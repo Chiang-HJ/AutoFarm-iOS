@@ -19,7 +19,10 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var routeLoopTarget: Int = 0 // 0 = 無限
     @Published public var routeCurrentLoop: Int = 0
     @Published public var cooldownRemainingSec: Int = 0
-    @Published public var speedKmh: Double = 9.0
+    @Published public var speedKmh: Double = 18.0
+
+    @Published public var cameraCenterTrigger: Int = 0
+    @Published public var cameraRouteBoundsTrigger: Int = 0
 
     @Published public var executionMode: Int = 0 // 0: 直線, 1: 種花, 2: 果實, 3: 同心圓
     @Published public var loopMode: LoopMode = .closedLoop
@@ -165,6 +168,19 @@ public final class AutoFarmSession: ObservableObject {
         }
     }
 
+    /// 跳至上一航點
+    public func prevRoutePoint() {
+        guard !routePoints.isEmpty else { return }
+        self.currentRouteIndex = (self.currentRouteIndex - 1 + routePoints.count) % routePoints.count
+        let prev = routePoints[self.currentRouteIndex]
+        self.currentLat = prev.lat
+        self.currentLng = prev.lng
+        self.cooldownRemainingSec = prev.waitTimeSec
+        self.waitAccumulatedMs = 0.0
+        pushCurrentLocation()
+        showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+    }
+
     /// 跳至下一航點
     public func nextRoutePoint() {
         guard !routePoints.isEmpty else { return }
@@ -176,6 +192,18 @@ public final class AutoFarmSession: ObservableObject {
         self.waitAccumulatedMs = 0.0
         pushCurrentLocation()
         showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+    }
+
+    /// 平滑移動地圖相機至當前虛擬定位
+    public func centerCameraOnCurrentLocation() {
+        self.cameraCenterTrigger += 1
+        showToast("視角已置中至目前定位")
+    }
+
+    /// 平滑縮放地圖相機至完整路線全覽
+    public func fitCameraToRouteBounds() {
+        self.cameraRouteBoundsTrigger += 1
+        showToast("視角已縮放至路線全覽")
     }
 
     /// 定位到路線幾何中心 (算術平均中心，點擊自動暫停路線並瞬移)

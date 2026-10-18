@@ -27,6 +27,8 @@ public struct FlowerCircleConfig: Codable {
     }
 }
 
+public typealias FlowerCircleParam = FlowerCircleConfig
+
 public struct MultiFlowerSettings: Codable {
     public var flowerTeleport: Bool = true
     public var enableCircle2: Bool = true
@@ -35,7 +37,21 @@ public struct MultiFlowerSettings: Codable {
     public var circle1: FlowerCircleConfig = FlowerCircleConfig(radius: 28.0, loops: 1.0, waitBeforeSec: 1, waitAfterSec: 7)
     public var circle2: FlowerCircleConfig = FlowerCircleConfig(radius: 24.0, loops: 1.0, waitBeforeSec: 1, waitAfterSec: 7)
 
-    public init() {}
+    public init(
+        flowerTeleport: Bool = true,
+        enableCircle2: Bool = true,
+        flowerJitter: Bool = true,
+        flowerAlternate: Bool = true,
+        circle1: FlowerCircleConfig = FlowerCircleConfig(radius: 28.0, loops: 1.0, waitBeforeSec: 1, waitAfterSec: 7),
+        circle2: FlowerCircleConfig = FlowerCircleConfig(radius: 24.0, loops: 1.0, waitBeforeSec: 1, waitAfterSec: 7)
+    ) {
+        self.flowerTeleport = flowerTeleport
+        self.enableCircle2 = enableCircle2
+        self.flowerJitter = flowerJitter
+        self.flowerAlternate = flowerAlternate
+        self.circle1 = circle1
+        self.circle2 = circle2
+    }
 }
 
 public final class FlowerPlantingEngine {

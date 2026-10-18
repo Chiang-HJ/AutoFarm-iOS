@@ -56,8 +56,7 @@ public final class AutoFarmSession: ObservableObject {
     public var currentDisplayIndex: Int {
         guard !routePoints.isEmpty, currentRouteIndex < routePoints.count else { return 0 }
         if executionMode == 1 { // 種花模式：取當前節點的花苞編號
-            let flowerIdx = routePoints[currentRouteIndex].flowerIndex
-            if flowerIdx > 0 {
+            if let flowerIdx = routePoints[currentRouteIndex].flowerIndex, flowerIdx > 0 {
                 return min(max(flowerIdx - 1, 0), max(displayWaypoints.count - 1, 0))
             }
         }

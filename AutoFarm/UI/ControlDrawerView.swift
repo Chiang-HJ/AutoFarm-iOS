@@ -881,3 +881,21 @@ extension View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
+
+/// 單一路線原生分享 Sheet
+public struct SingleRouteShareSheet: UIViewControllerRepresentable {
+    public let route: SavedRoute
+
+    public init(route: SavedRoute) {
+        self.route = route
+    }
+
+    public func makeUIViewController(context: Context) -> UIActivityViewController {
+        let content = route.nodes.map { "\($0.lat), \($0.lng)" }.joined(separator: "\n")
+        let item = "【\(route.name)】路徑座標點位：\n\(content)"
+        let av = UIActivityViewController(activityItems: [item], applicationActivities: nil)
+        return av
+    }
+
+    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}

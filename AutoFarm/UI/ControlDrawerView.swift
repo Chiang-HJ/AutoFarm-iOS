@@ -463,9 +463,10 @@ public struct ControlDrawerView: View {
     }
 
     // MARK: - 檔案匯入處理
-    private func handleFileImportResult(_ result: Result<URL, Error>) {
+    private func handleFileImportResult(_ result: Result<[URL], Error>) {
         switch result {
-        case .success(let url):
+        case .success(let urls):
+            guard let url = urls.first else { return }
             let (success, name, count, error) = db.importRouteFromFile(url: url)
             if success {
                 session.toastMessage = "成功匯入路線【\(name)】共 \(count) 個航點！"

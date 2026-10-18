@@ -55,7 +55,8 @@ public struct DatabaseSheet: View {
                 allowsMultipleSelection: false
             ) { result in
                 switch result {
-                case .success(let url):
+                case .success(let urls):
+                    guard let url = urls.first else { return }
                     let (success, name, count, error) = db.importRouteFromFile(url: url)
                     if success {
                         session.toastMessage = "成功匯入路線【\(name)】共 \(count) 點！"

@@ -17,7 +17,7 @@ public struct ContentView: View {
     @State private var isSavingCoordNamePrompt: Bool = false
     @State private var saveCoordNameInput: String = ""
 
-    // 點選地圖數字球選定之航點索引 (對齊安卓：從此點出發 / 瞬移 / 複製)
+    // 點選地圖數字球選定之航點索引 (對齊安卓：從此點出發 / 瞬移 / 刪除 / 複製)
     @State private var selectedWaypointIndex: Int? = nil
 
     // 自由拖曳虛擬搖桿開關位置
@@ -27,6 +27,15 @@ public struct ContentView: View {
     public init() {}
 
     public var body: some View {
+        if !session.isLoggedIn {
+            LoginView()
+        } else {
+            mainContentView
+        }
+    }
+
+    // MARK: - 已登入之主畫面視圖
+    private var mainContentView: some View {
         ZStack {
             // 1. 全螢幕互動地圖
             MainMapView(
@@ -115,10 +124,10 @@ public struct ContentView: View {
             }
             .edgesIgnoringSafeArea(.bottom)
 
-            // 3. 可自由拖曳的虛擬方向盤與開關
+            // 3. 可自由拖曳的懸浮方向盤與開關
             draggableJoystickView
 
-            // 4. 點選地圖數字球操作浮動卡片 (對齊安卓：從此點開始運行、瞬移、複製)
+            // 4. 點選地圖數字球操作浮動卡片 (對齊安卓：從此點開始運行、瞬移、刪除此航點、複製)
             if let wpIdx = selectedWaypointIndex {
                 waypointActionOverlay(index: wpIdx)
             }
@@ -161,7 +170,7 @@ public struct ContentView: View {
         }
     }
 
-    // MARK: - 點選地圖數字球操作卡片 (對齊安卓)
+    // MARK: - 點選地圖數字球操作卡片 (完全對齊安卓功能)
     @ViewBuilder
     private func waypointActionOverlay(index: Int) -> some View {
         let waypoints = session.displayWaypoints
@@ -197,7 +206,7 @@ public struct ContentView: View {
                 Divider()
 
                 VStack(spacing: 8) {
-                    // 1. 從此點開始運行 (跳轉至此點)
+                    // 1. 從此點開始運行 (繼續自動巡航，不暫停)
                     Button(action: {
                         session.jumpToWaypoint(index: index)
                         selectedWaypointIndex = nil
@@ -205,7 +214,7 @@ public struct ContentView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "play.circle.fill")
                                 .font(.system(size: 16))
-                            Text("從此點開始運行 (跳至此航點)")
+                            Text("從此點開始運行 (繼續巡航)")
                                 .font(.system(size: 13, weight: .bold))
                         }
                         .frame(maxWidth: .infinity)
@@ -216,18 +225,18 @@ public struct ContentView: View {
                     }
 
                     HStack(spacing: 8) {
-                        // 2. 瞬移到此點
+                        // 2. 瞬移到此點 (暫停路線)
                         Button(action: {
                             session.teleport(to: node.lat, lng: node.lng)
                             selectedWaypointIndex = nil
                         }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "location.fill")
-                                Text("瞬移到此點")
-                                    .font(.system(size: 13, weight: .semibold))
+                                Text("瞬移到此點 (暫停)")
+                                    .font(.system(size: 12, weight: .semibold))
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
+                            .padding(.vertical, 9)
                             .background(Color.blue)
                             .foregroundColor(.white)
                             .cornerRadius(10)
@@ -242,14 +251,31 @@ public struct ContentView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "doc.on.doc.fill")
                                 Text("複製座標")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 12, weight: .semibold))
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
+                            .padding(.vertical, 9)
                             .background(Color(UIColor.secondarySystemBackground))
                             .foregroundColor(.primary)
                             .cornerRadius(10)
                         }
+                    }
+
+                    // 4. 刪除此航點 (對齊安卓：直接從當前路線中剔除此點)
+                    Button(action: {
+                        session.removeWaypoint(at: index)
+                        selectedWaypointIndex = nil
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash.fill")
+                            Text("刪除此航點")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.red.opacity(0.15))
+                        .foregroundColor(.red)
+                        .cornerRadius(10)
                     }
                 }
             }
@@ -261,9 +287,9 @@ public struct ContentView: View {
         }
     }
 
-    // MARK: - 可自由拖曳位置的虛擬搖桿組件
+    // MARK: - 可自由拖曳位置的懸浮搖桿組件
     private var draggableJoystickView: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack {
             if session.isJoystickEnabled {
                 VirtualJoystickView()
                     .transition(.scale.combined(with: .opacity))
@@ -282,8 +308,8 @@ public struct ContentView: View {
                             .font(.system(size: 11, weight: .bold))
                     }
                     .foregroundColor(.white)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .padding(.horizontal, 10)
+                    .frame(height: 40)
+                    .padding(.horizontal, 12)
                     .background(Color.blue)
                     .clipShape(Capsule())
                     .shadow(color: Color.black.opacity(0.25), radius: 5, x: 0, y: 2)
@@ -304,7 +330,7 @@ public struct ContentView: View {
             x: joystickPositionOffset.width + joystickDragOffset.width,
             y: joystickPositionOffset.height + joystickDragOffset.height
         )
-        .position(x: 75, y: 530)
+        .position(x: 80, y: 520)
     }
 
     // MARK: - 頂部工具列

@@ -232,6 +232,29 @@ public struct SettingsSheet: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                Section(header: Text("帳號管理")) {
+                    HStack {
+                        Text("目前登入帳號")
+                        Spacer()
+                        Text(session.loggedInUsername.isEmpty ? "使用者" : session.loggedInUsername)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Button(action: {
+                        dismiss()
+                        session.logout()
+                    }) {
+                        HStack {
+                            Spacer()
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                            Text("登出此帳號")
+                                .fontWeight(.bold)
+                            Spacer()
+                        }
+                    }
+                    .foregroundColor(.red)
+                }
             }
             .navigationTitle("連線設定")
             .navigationBarItems(trailing: Button("完成") { dismiss() })

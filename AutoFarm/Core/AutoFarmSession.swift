@@ -42,6 +42,10 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var deviceIP: String = "10.7.1.1"
     @Published public var pairingFilePath: String = ""
 
+    // Login & Auth State
+    @Published public var isLoggedIn: Bool = false
+    @Published public var loggedInUsername: String = ""
+
     private var pushFailureCount: Int = 0
 
     /// 供地圖與 UI 展示用的基準航點列表 (種花模式顯示花苞點，直線模式顯示航點，杜絕幾千個點)
@@ -78,6 +82,26 @@ public final class AutoFarmSession: ObservableObject {
         } else {
             self.pairingFilePath = PairingStore.shared.pairingPath
         }
+        self.isLoggedIn = UserDefaults.standard.bool(forKey: "AutoFarm_IsLoggedIn")
+        self.loggedInUsername = UserDefaults.standard.string(forKey: "AutoFarm_LoggedInUser") ?? ""
+    }
+
+    // MARK: - Auth
+    public func login(username: String) {
+        self.isLoggedIn = true
+        self.loggedInUsername = username
+        UserDefaults.standard.set(true, forKey: "AutoFarm_IsLoggedIn")
+        UserDefaults.standard.set(username, forKey: "AutoFarm_LoggedInUser")
+        showToast("登入成功，歡迎使用 AutoFarm！")
+    }
+
+    public func logout() {
+        self.isLoggedIn = false
+        self.loggedInUsername = ""
+        UserDefaults.standard.set(false, forKey: "AutoFarm_IsLoggedIn")
+        UserDefaults.standard.removeObject(forKey: "AutoFarm_LoggedInUser")
+        stopRoute()
+        showToast("已登出帳號")
     }
 
     // MARK: - Route Execution Controls
@@ -246,9 +270,41 @@ public final class AutoFarmSession: ObservableObject {
         }
         self.cooldownRemainingSec = 0
         self.waitAccumulatedMs = 0.0
+        self.isRoutePaused = false // 從此點開始運行，保持自動巡航
         pushCurrentLocation()
+        ensureEngineRunning()
         autoSaveCurrentProgress()
-        showToast("已跳轉至第 \(validIdx + 1) 個航點出發")
+        showToast("已從第 \(validIdx + 1) 個航點開始巡航")
+    }
+
+    /// 刪除指定索引的航點 (地圖點擊數字球刪除點位)
+    public func removeWaypoint(at index: Int) {
+        guard index >= 0 else { return }
+        if !originalBasePoints.isEmpty && index < originalBasePoints.count {
+            let removed = originalBasePoints.remove(at: index)
+            // 重新準備路線點
+            if executionMode == 0 {
+                self.routePoints = LinearPatrolEngine.prepareRouteNodes(basePoints: originalBasePoints, mode: loopMode)
+            } else if executionMode == 1 {
+                self.routePoints = FlowerPlantingEngine.generateMultiFlowerNodes(basePoints: originalBasePoints, settings: flowerSettings)
+            } else if executionMode == 2 {
+                self.routePoints = FruitHarvestEngine.prepareFruitNodes(basePoints: originalBasePoints, walkDistanceMeters: fruitWalkDistance)
+            }
+            if currentRouteIndex >= routePoints.count {
+                currentRouteIndex = max(routePoints.count - 1, 0)
+            }
+            autoSaveCurrentProgress()
+            self.cameraRouteBoundsTrigger += 1
+            showToast("已刪除航點【\(removed.label ?? "點位 \(index + 1)")】")
+        } else if index < routePoints.count {
+            let removed = routePoints.remove(at: index)
+            if currentRouteIndex >= routePoints.count {
+                currentRouteIndex = max(routePoints.count - 1, 0)
+            }
+            autoSaveCurrentProgress()
+            self.cameraRouteBoundsTrigger += 1
+            showToast("已刪除第 \(index + 1) 個航點")
+        }
     }
 
     /// 自動即時保存當前巡航進度快照 (防止 App 意外退出、閃退遺失最新進度)

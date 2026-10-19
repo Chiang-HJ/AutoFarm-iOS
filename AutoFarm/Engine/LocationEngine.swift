@@ -245,7 +245,7 @@ enum LocationEngine {
 
         // 若記憶體中無活躍句柄，嘗試透過 DVT 通道重新握手並發送 clear，徹底清除系統 locationd 殘留鎖定
         let actualPairing = !pairingPath.isEmpty ? pairingPath : PairingStore.shared.pairingPath
-        let actualIP = !deviceIP.isEmpty ? deviceIP : PairingStore.shared.selectedDeviceIP
+        let actualIP = !deviceIP.isEmpty ? deviceIP : "10.7.1.1"
         guard !actualPairing.isEmpty, FileManager.default.fileExists(atPath: actualPairing) else {
             return ok
         }

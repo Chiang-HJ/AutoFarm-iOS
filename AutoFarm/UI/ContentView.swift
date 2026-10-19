@@ -6,14 +6,11 @@ public struct ContentView: View {
     @StateObject private var session = AutoFarmSession.shared
     @ObservedObject private var db = SavedDatabaseStore.shared
     @ObservedObject private var clipboard = ClipboardDetector.shared
-    @ObservedObject private var logManager = MushroomLogManager.shared
 
     @State private var searchInput: String = ""
     @State private var isSharePresented: Bool = false
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
-    @State private var isBlockedMushroomPresented: Bool = false
-    @State private var isMushroomScanPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -125,43 +122,6 @@ public struct ContentView: View {
                                 .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
                         }
 
-                        // 卡菇助手
-                        Button(action: {
-                            hideKeyboard()
-                            self.isBlockedMushroomPresented = true
-                        }) {
-                            Image(systemName: "camera.viewfinder")
-                                .font(.system(size: 18))
-                                .foregroundColor(.green)
-                                .frame(width: 44, height: 44)
-                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                                .clipShape(Circle())
-                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
-                        }
-
-                        // 掃菇模式 (800 km/h 巡航 + 自動跳轉皮克敏)
-                        Button(action: {
-                            hideKeyboard()
-                            self.isMushroomScanPresented = true
-                        }) {
-                            ZStack(alignment: .topTrailing) {
-                                Image(systemName: "camera.macro")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(.purple)
-                                    .frame(width: 44, height: 44)
-                                    .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                                    .clipShape(Circle())
-                                    .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
-
-                                if logManager.unreadCount > 0 {
-                                    Circle()
-                                        .fill(Color.red)
-                                        .frame(width: 10, height: 10)
-                                        .offset(x: -2, y: 2)
-                                }
-                            }
-                        }
-
                         // 一鍵停止虛擬定位回到真實 GPS
                         Button(action: {
                             hideKeyboard()
@@ -235,12 +195,6 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isSettingsPresented) {
             SettingsSheet()
-        }
-        .sheet(isPresented: $isBlockedMushroomPresented) {
-            BlockedMushroomView()
-        }
-        .sheet(isPresented: $isMushroomScanPresented) {
-            MushroomScanView()
         }
     }
 

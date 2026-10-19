@@ -185,22 +185,19 @@ public struct DatabaseBackupPayload: Codable {
     public var savedLocations: [SavedLocation] = []
     public var savedRoutes: [SavedRoute] = []
     public var locationHistory: [LocationHistoryItem] = []
-    public var blockedMushrooms: [BlockedMushroomItem] = []
 
     public init(
         version: Int = 1,
         exportDate: Date = Date(),
         savedLocations: [SavedLocation],
         savedRoutes: [SavedRoute],
-        locationHistory: [LocationHistoryItem],
-        blockedMushrooms: [BlockedMushroomItem]
+        locationHistory: [LocationHistoryItem]
     ) {
         self.version = version
         self.exportDate = exportDate
         self.savedLocations = savedLocations
         self.savedRoutes = savedRoutes
         self.locationHistory = locationHistory
-        self.blockedMushrooms = blockedMushrooms
     }
 }
 
@@ -538,13 +535,12 @@ public final class SavedDatabaseStore: ObservableObject {
 
     // MARK: - 全庫備份與還原 (JSON)
 
-    /// 匯出全庫完整備份檔 (JSON 格式，包含座標、路線、歷史紀錄與卡菇資料)
+    /// 匯出全庫完整備份檔 (JSON 格式，包含座標、路線與歷史紀錄)
     public func exportFullBackup() -> URL? {
         let payload = DatabaseBackupPayload(
             savedLocations: self.savedLocations,
             savedRoutes: self.savedRoutes,
-            locationHistory: self.locationHistory,
-            blockedMushrooms: BlockedMushroomManager.shared.items
+            locationHistory: self.locationHistory
         )
 
         let encoder = JSONEncoder()
@@ -596,17 +592,10 @@ public final class SavedDatabaseStore: ObservableObject {
                     locationHistory.append(h)
                 }
             }
-            for m in payload.blockedMushrooms {
-                if !BlockedMushroomManager.shared.items.contains(where: { $0.id == m.id }) {
-                    BlockedMushroomManager.shared.addItem(m)
-                }
-            }
         } else {
             self.savedLocations = payload.savedLocations
             self.savedRoutes = payload.savedRoutes
             self.locationHistory = payload.locationHistory
-            BlockedMushroomManager.shared.items = payload.blockedMushrooms
-            BlockedMushroomManager.shared.saveData()
         }
 
         saveLocations()
@@ -615,8 +604,7 @@ public final class SavedDatabaseStore: ObservableObject {
 
         let totalLocs = payload.savedLocations.count
         let totalRoutes = payload.savedRoutes.count
-        let totalMushrooms = payload.blockedMushrooms.count
-        return (true, "還原成功！已載入 \(totalLocs) 個座標、\(totalRoutes) 條路線、\(totalMushrooms) 個卡菇紀錄。")
+        return (true, "還原成功！已載入 \(totalLocs) 個座標、\(totalRoutes) 條路線。")
     }
 
     // MARK: - 內部解析工具

@@ -110,7 +110,7 @@ public struct ControlDrawerView: View {
                 UTType.text,
                 UTType.data
             ],
-            allowsMultipleSelection: false
+            allowsMultipleSelection: true
         ) { result in
             handleFileImportResult(result)
         }
@@ -215,7 +215,7 @@ public struct ControlDrawerView: View {
 
     // MARK: - 平時待命時的獨立速度調整區塊 (純文字輸入框，支援收起鍵盤，無快捷鍵)
     private var idleSpeedControlSection: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "gauge.with.needle")
                     .foregroundColor(.blue)
@@ -228,15 +228,15 @@ public struct ControlDrawerView: View {
             HStack(spacing: 4) {
                 TextField("18.0", text: $speedInputText, onCommit: commitSpeedInput)
                     .keyboardType(.decimalPad)
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .multilineTextAlignment(.center)
-                    .frame(width: 75)
+                    .frame(width: 55)
                     .padding(.vertical, 5)
                     .background(Color(UIColor.tertiarySystemBackground))
                     .cornerRadius(8)
 
                 Text("km/h")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
 
@@ -247,16 +247,30 @@ public struct ControlDrawerView: View {
                 commitSpeedInput()
                 hideKeyboard()
             }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark")
+                Text("完成")
+                    .font(.system(size: 11, weight: .bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+            }
+
+            // 停止虛擬定位還原真實 GPS
+            Button(action: {
+                hideKeyboard()
+                session.stopMocking()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "location.slash.fill")
                         .font(.system(size: 11, weight: .bold))
-                    Text("完成")
-                        .font(.system(size: 12, weight: .bold))
+                    Text("還原GPS")
+                        .font(.system(size: 11, weight: .bold))
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(Color.blue)
-                .foregroundColor(.white)
+                .background(Color.red.opacity(0.15))
+                .foregroundColor(.red)
                 .cornerRadius(8)
             }
         }
@@ -504,8 +518,8 @@ public struct ControlDrawerView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
-                    .background(Color.gray.opacity(0.18))
-                    .foregroundColor(.primary)
+                    .background(Color.red.opacity(0.15))
+                    .foregroundColor(.red)
                     .cornerRadius(8)
                 }
             }
@@ -1075,16 +1089,26 @@ public struct ControlDrawerView: View {
         }
     }
 
-    // MARK: - 檔案匯入處理
+    // MARK: - 檔案匯入處理 (支援單檔多路線自動拆分與多檔案批次匯入)
     private func handleFileImportResult(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            guard let url = urls.first else { return }
-            let (success, name, count, error) = db.importRouteFromFile(url: url)
-            if success {
-                session.toastMessage = "成功匯入路線【\(name)】共 \(count) 個航點！"
+            guard !urls.isEmpty else { return }
+            if urls.count == 1 {
+                let (success, name, count, error) = db.importRouteFromFile(url: urls[0])
+                if success {
+                    session.toastMessage = "成功匯入路線【\(name)】共 \(count) 個航點！"
+                } else {
+                    session.toastMessage = error ?? "匯入失敗"
+                }
             } else {
-                session.toastMessage = error ?? "匯入失敗"
+                let (successCount, failedCount, names) = db.importRoutesFromFiles(urls: urls)
+                if successCount > 0 {
+                    let sample = names.prefix(3).joined(separator: ", ")
+                    session.toastMessage = "成功批次匯入 \(successCount) 條路線！[\(sample)\(names.count > 3 ? "..." : "")]"
+                } else {
+                    session.toastMessage = "匯入失敗，選取檔案中未包含有效座標"
+                }
             }
         case .failure(let err):
             session.toastMessage = "選取檔案失敗: \(err.localizedDescription)"

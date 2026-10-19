@@ -24,7 +24,7 @@ public struct MushroomScanView: View {
             VStack(spacing: 0) {
                 Picker("掃菇模式", selection: $selectedTab) {
                     Text("區域設定").tag(0)
-                    Text("掃菇紀錄 (\(logManager.records.count))\(logManager.unreadCount > 0 ? " 🔴" : "")").tag(1)
+                    Text("掃菇紀錄 (\(logManager.records.count))\(logManager.unreadCount > 0 ? " (新)" : "")").tag(1)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
@@ -113,7 +113,7 @@ public struct MushroomScanView: View {
                     HStack {
                         Text("巡航時速")
                         Spacer()
-                        Text("\(Int(cruiseSpeedKmh)) km/h (完全對齊安卓)")
+                        Text("\(Int(cruiseSpeedKmh)) km/h (超高速巡航)")
                             .fontWeight(.bold)
                             .foregroundColor(.orange)
                     }
@@ -203,7 +203,7 @@ public struct MushroomScanView: View {
                         Text("尚無掃菇紀錄。")
                             .font(.headline)
                             .foregroundColor(.secondary)
-                        Text("啟動掃菇模式後在遊戲中若出現大蘑菇，系統將依 800 km/h 航跡精準回推真實座標並記錄在此！")
+                        Text("啟動巡航後在遊戲中看到大蘑菇時按下螢幕截圖，系統將自動解析畫面並依 800 km/h 航跡精準回推真實座標並記錄在此！")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)

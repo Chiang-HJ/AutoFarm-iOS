@@ -85,6 +85,26 @@ public struct StatusHUDView: View {
                             .foregroundColor(.orange)
                     }
                 }
+
+                // 一鍵停止虛擬定位回到真實 GPS
+                if session.isSimulatingLocation {
+                    Divider().frame(height: 14)
+                    Button(action: {
+                        session.stopMocking()
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "location.slash.fill")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("還原GPS")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.red.opacity(0.85))
+                        .cornerRadius(10)
+                    }
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

@@ -453,7 +453,7 @@ public final class SavedDatabaseStore: ObservableObject {
         return (true, parsedNodes.count)
     }
 
-    /// 從檔案 URL 匯入路線 (支援 GPX, CSV, TXT)
+    /// 從檔案 URL 匯入路線 (支援 GPX, CSV, TXT，支援單一 GPX 檔案包含多條路線自動拆分)
     public func importRouteFromFile(url: URL, tag: String = "") -> (success: Bool, name: String, count: Int, error: String?) {
         let isSecured = url.startAccessingSecurityScopedResource()
         defer {
@@ -466,35 +466,71 @@ public final class SavedDatabaseStore: ObservableObject {
 
         let ext = url.pathExtension.lowercased()
         let fileName = url.deletingPathExtension().lastPathComponent
-        var nodes: [RouteNode] = []
 
         if ext == "gpx" {
-            nodes = parseGPX(content: content)
+            let parsedRoutes = parseGPXMulti(content: content, fallbackName: fileName)
+            guard !parsedRoutes.isEmpty else {
+                return (false, fileName, 0, "GPX 檔案內未包含有效航點 (<rtept>, <trkpt>, <wpt>)")
+            }
+
+            var totalNodes = 0
+            for r in parsedRoutes {
+                saveRoute(name: r.name, nodes: r.nodes, tag: tag)
+                totalNodes += r.nodes.count
+            }
+
+            let displayName = parsedRoutes.count > 1 ? "\(fileName) (共 \(parsedRoutes.count) 條路線)" : (parsedRoutes.first?.name ?? fileName)
+            return (true, displayName, totalNodes, nil)
         } else {
-            nodes = parsePlainText(content: content)
+            let nodes = parsePlainText(content: content)
+            guard !nodes.isEmpty else {
+                return (false, fileName, 0, "檔案內未包含有效座標")
+            }
+            saveRoute(name: fileName, nodes: nodes, tag: tag)
+            return (true, fileName, nodes.count, nil)
         }
-
-        guard !nodes.isEmpty else {
-            return (false, fileName, 0, "檔案內未包含有效座標")
-        }
-
-        saveRoute(name: fileName, nodes: nodes, tag: tag)
-        return (true, fileName, nodes.count, nil)
     }
 
-    /// 批次從多個檔案 URL 匯入路線 (支援多選 GPX, CSV, TXT)
+    /// 批次從多個檔案 URL 匯入路線 (支援多選 GPX, CSV, TXT，支援單檔內多路線自動拆分統計)
     public func importRoutesFromFiles(urls: [URL], tag: String = "") -> (successCount: Int, failedCount: Int, importedNames: [String]) {
         var successCount = 0
         var failedCount = 0
         var importedNames: [String] = []
 
         for url in urls {
-            let res = importRouteFromFile(url: url, tag: tag)
-            if res.success {
-                successCount += 1
-                importedNames.append(res.name)
-            } else {
+            let isSecured = url.startAccessingSecurityScopedResource()
+            defer {
+                if isSecured { url.stopAccessingSecurityScopedResource() }
+            }
+
+            guard let content = try? String(contentsOf: url, encoding: .utf8) ?? String(contentsOf: url, encoding: .ascii) else {
                 failedCount += 1
+                continue
+            }
+
+            let ext = url.pathExtension.lowercased()
+            let fileName = url.deletingPathExtension().lastPathComponent
+
+            if ext == "gpx" {
+                let parsedRoutes = parseGPXMulti(content: content, fallbackName: fileName)
+                if !parsedRoutes.isEmpty {
+                    for r in parsedRoutes {
+                        saveRoute(name: r.name, nodes: r.nodes, tag: tag)
+                        successCount += 1
+                        importedNames.append(r.name)
+                    }
+                } else {
+                    failedCount += 1
+                }
+            } else {
+                let nodes = parsePlainText(content: content)
+                if !nodes.isEmpty {
+                    saveRoute(name: fileName, nodes: nodes, tag: tag)
+                    successCount += 1
+                    importedNames.append(fileName)
+                } else {
+                    failedCount += 1
+                }
             }
         }
         return (successCount, failedCount, importedNames)
@@ -618,22 +654,98 @@ public final class SavedDatabaseStore: ObservableObject {
         return nil
     }
 
-    private func parseGPX(content: String) -> [RouteNode] {
-        var results: [RouteNode] = []
-        let trkptRegex = try? NSRegularExpression(pattern: "<(trkpt|wpt)\\s+lat=[\"']([^\"']+)[\"']\\s+lon=[\"']([^\"']+)[\"']", options: .caseInsensitive)
+    public struct ParsedGPXRoute {
+        public let name: String
+        public let nodes: [RouteNode]
 
-        if let matches = trkptRegex?.matches(in: content, range: NSRange(content.startIndex..., in: content)) {
+        public init(name: String, nodes: [RouteNode]) {
+            self.name = name
+            self.nodes = nodes
+        }
+    }
+
+    public func parseGPXMulti(content: String, fallbackName: String) -> [ParsedGPXRoute] {
+        var routes: [ParsedGPXRoute] = []
+
+        // 1. 優先辨識所有 <rte>...</rte> 區塊 (如印81~100收果等多路線 GPX)
+        let rteRegex = try? NSRegularExpression(pattern: "<rte\\b[^>]*>([\\s\\S]*?)</rte>", options: .caseInsensitive)
+        if let matches = rteRegex?.matches(in: content, range: NSRange(content.startIndex..., in: content)), !matches.isEmpty {
             for match in matches {
-                if match.numberOfRanges >= 4,
-                   let latRange = Range(match.range(at: 2), in: content),
-                   let lonRange = Range(match.range(at: 3), in: content),
-                   let lat = Double(content[latRange]),
-                   let lon = Double(content[lonRange]) {
-                    results.append(RouteNode(lat: lat, lng: lon, label: "航點 \(results.count + 1)"))
+                guard let range = Range(match.range(at: 1), in: content) else { continue }
+                let block = String(content[range])
+                let name = extractName(from: block) ?? "路線 \(routes.count + 1)"
+                let nodes = extractNodesFromGPXBlock(block: block, tagNames: ["rtept", "trkpt", "wpt"])
+                if !nodes.isEmpty {
+                    routes.append(ParsedGPXRoute(name: name, nodes: nodes))
                 }
             }
         }
-        return results
+
+        // 2. 若無 <rte>，辨識所有 <trk>...</trk> 區塊
+        if routes.isEmpty {
+            let trkRegex = try? NSRegularExpression(pattern: "<trk\\b[^>]*>([\\s\\S]*?)</trk>", options: .caseInsensitive)
+            if let matches = trkRegex?.matches(in: content, range: NSRange(content.startIndex..., in: content)), !matches.isEmpty {
+                for match in matches {
+                    guard let range = Range(match.range(at: 1), in: content) else { continue }
+                    let block = String(content[range])
+                    let name = extractName(from: block) ?? "軌跡 \(routes.count + 1)"
+                    let nodes = extractNodesFromGPXBlock(block: block, tagNames: ["trkpt", "rtept", "wpt"])
+                    if !nodes.isEmpty {
+                        routes.append(ParsedGPXRoute(name: name, nodes: nodes))
+                    }
+                }
+            }
+        }
+
+        // 3. 若無獨立區塊，抓取全檔所有點位作為單一獨立路線 (相容扁平 wpt / trkpt / rtept 標籤)
+        if routes.isEmpty {
+            let nodes = extractNodesFromGPXBlock(block: content, tagNames: ["rtept", "trkpt", "wpt"])
+            if !nodes.isEmpty {
+                let name = extractName(from: content) ?? fallbackName
+                routes.append(ParsedGPXRoute(name: name, nodes: nodes))
+            }
+        }
+
+        return routes
+    }
+
+    private func extractName(from block: String) -> String? {
+        guard let nameRegex = try? NSRegularExpression(pattern: "<name\\b[^>]*>([\\s\\S]*?)</name>", options: .caseInsensitive),
+              let match = nameRegex.firstMatch(in: block, range: NSRange(block.startIndex..., in: block)),
+              let range = Range(match.range(at: 1), in: block) else { return nil }
+        let raw = String(block[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
+    }
+
+    private func extractNodesFromGPXBlock(block: String, tagNames: [String]) -> [RouteNode] {
+        var nodes: [RouteNode] = []
+        let pattern = "<(?:" + tagNames.joined(separator: "|") + ")\\b([^>]*)>"
+        guard let tagRegex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+
+        let latRegex = try? NSRegularExpression(pattern: "\\blat=[\"']([^\"']+)[\"']", options: .caseInsensitive)
+        let lonRegex = try? NSRegularExpression(pattern: "\\b(?:lon|lng)=[\"']([^\"']+)[\"']", options: .caseInsensitive)
+
+        let matches = tagRegex.matches(in: block, range: NSRange(block.startIndex..., in: block))
+        for match in matches {
+            guard let attrRange = Range(match.range(at: 1), in: block) else { continue }
+            let attrs = String(block[attrRange])
+            guard let latMatch = latRegex?.firstMatch(in: attrs, range: NSRange(attrs.startIndex..., in: attrs)),
+                  let lonMatch = lonRegex?.firstMatch(in: attrs, range: NSRange(attrs.startIndex..., in: attrs)),
+                  let rLat = Range(latMatch.range(at: 1), in: attrs),
+                  let rLon = Range(lonMatch.range(at: 1), in: attrs),
+                  let lat = Double(attrs[rLat]),
+                  let lon = Double(attrs[rLon]) else {
+                continue
+            }
+
+            nodes.append(RouteNode(lat: lat, lng: lon, label: "點位 \(nodes.count + 1)"))
+        }
+        return nodes
+    }
+
+    private func parseGPX(content: String) -> [RouteNode] {
+        let multi = parseGPXMulti(content: content, fallbackName: "匯入路線")
+        return multi.flatMap { $0.nodes }
     }
 
     // MARK: - 本地持久化 (支援容錯載入與雙重檔案備份)

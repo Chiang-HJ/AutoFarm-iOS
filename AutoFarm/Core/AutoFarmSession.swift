@@ -490,14 +490,23 @@ public final class AutoFarmSession: ObservableObject {
         showToast("已停止路線 (維持當前虛擬位置)")
     }
 
-    /// 停止虛擬定位模擬 (徹底停止 DVT，重置 locationd，整機還原真實 GPS)
+    /// 停止虛擬定位模擬 (徹底停止 DVT，重置 locationd，整機還原真實 GPS 並自動置中真實位置)
     public func stopMocking() {
         stopRoute()
-        _ = LocationEngine.clear()
+        _ = LocationEngine.clear(pairingPath: pairingFilePath, deviceIP: deviceIP)
         SilentAudioKeepAlive.shared.stop()
         BackgroundKeepAlive.shared.stop()
         self.isSimulatingLocation = false
-        showToast("已停止虛擬定位，回到現實位置")
+        self.isRoutePaused = true
+
+        RealLocationWatcher.shared.requestRealLocation { [weak self] coord in
+            guard let self = self else { return }
+            self.currentLat = coord.latitude
+            self.currentLng = coord.longitude
+            self.centerCameraOnCurrentLocation()
+        }
+
+        showToast("已停止虛擬定位，回到現實座標！")
     }
 
     /// 手動瞬移至指定座標 (方案 A: 支援掛起插隊，自動記錄中斷點與瞬移歷史，按繼續自動返回接續)
@@ -734,5 +743,34 @@ public final class AutoFarmSession: ObservableObject {
                 }
             }
         }
+    }
+}
+
+// MARK: - 真實硬體 GPS 監聽器 (用於還原真實定位時立即校準視角)
+public final class RealLocationWatcher: NSObject, CLLocationManagerDelegate {
+    public static let shared = RealLocationWatcher()
+    private let manager = CLLocationManager()
+    private var completion: ((CLLocationCoordinate2D) -> Void)?
+
+    private override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+    }
+
+    public func requestRealLocation(completion: @escaping (CLLocationCoordinate2D) -> Void) {
+        self.completion = completion
+        manager.requestWhenInUseAuthorization()
+        manager.requestLocation()
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        completion?(loc.coordinate)
+        completion = nil
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        completion = nil
     }
 }

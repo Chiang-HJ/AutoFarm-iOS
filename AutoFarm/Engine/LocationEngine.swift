@@ -67,10 +67,10 @@ enum LocationEngine {
         return result
     }
 
-    static func clear() -> Result<Void, LocationEngineError> {
+    static func clear(pairingPath: String = "", deviceIP: String = "") -> Result<Void, LocationEngineError> {
         var result: Result<Void, LocationEngineError> = .failure(.notActive)
         queue.sync {
-            let code = clearLocked()
+            let code = clearLocked(pairingPath: pairingPath, deviceIP: deviceIP)
             result = code == ok ? .success(()) : .failure(.from(code: code))
         }
         return result
@@ -232,14 +232,85 @@ enum LocationEngine {
         return ok
     }
 
-    private static func clearLocked() -> Int32 {
-        guard let locationSimulation else { return locationClear }
-        let err = location_simulation_clear(locationSimulation)
-        cleanup()
-        if let err {
-            idevice_error_free(err)
-            return locationClear
+    private static func clearLocked(pairingPath: String = "", deviceIP: String = "") -> Int32 {
+        if let sim = locationSimulation {
+            let err = location_simulation_clear(sim)
+            cleanup()
+            if let err {
+                idevice_error_free(err)
+                return locationClear
+            }
+            return ok
         }
+
+        // 若記憶體中無活躍句柄，嘗試透過 DVT 通道重新握手並發送 clear，徹底清除系統 locationd 殘留鎖定
+        let actualPairing = !pairingPath.isEmpty ? pairingPath : PairingStore.shared.pairingPath
+        let actualIP = !deviceIP.isEmpty ? deviceIP : PairingStore.shared.selectedDeviceIP
+        guard !actualPairing.isEmpty, FileManager.default.fileExists(atPath: actualPairing) else {
+            return ok
+        }
+
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(49152).bigEndian
+        let inetResult = actualIP.withCString { inet_pton(AF_INET, $0, &address.sin_addr) }
+        guard inetResult == 1 else { return ok }
+
+        var pairingHandle: OpaquePointer?
+        if let pairingError = actualPairing.withCString({ rp_pairing_file_read($0, &pairingHandle) }) {
+            idevice_error_free(pairingError)
+            return ok
+        }
+        guard let pairingHandle else { return ok }
+        defer { rp_pairing_file_free(pairingHandle) }
+
+        var tempAdapter: OpaquePointer?
+        var tempHandshake: OpaquePointer?
+        let providerError = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                tunnel_create_rppairing(
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.stride),
+                    "AutoFarm",
+                    pairingHandle,
+                    nil,
+                    nil,
+                    &tempAdapter,
+                    &tempHandshake
+                )
+            }
+        }
+        guard providerError == nil, let tempAdapter, let tempHandshake else { return ok }
+
+        var tempServer: OpaquePointer?
+        if let remoteServerError = remote_server_connect_rsd(tempAdapter, tempHandshake, &tempServer) {
+            idevice_error_free(remoteServerError)
+            rsd_handshake_free(tempHandshake)
+            adapter_free(tempAdapter)
+            return ok
+        }
+        guard let tempServer else {
+            rsd_handshake_free(tempHandshake)
+            adapter_free(tempAdapter)
+            return ok
+        }
+
+        var tempSim: OpaquePointer?
+        if let simError = location_simulation_new(tempServer, &tempSim) {
+            idevice_error_free(simError)
+            remote_server_free(tempServer)
+            rsd_handshake_free(tempHandshake)
+            adapter_free(tempAdapter)
+            return ok
+        }
+
+        if let tempSim {
+            let err = location_simulation_clear(tempSim)
+            if let err { idevice_error_free(err) }
+            location_simulation_free(tempSim)
+        }
+        rsd_handshake_free(tempHandshake)
+        adapter_free(tempAdapter)
         return ok
     }
 }

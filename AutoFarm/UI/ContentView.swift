@@ -161,6 +161,20 @@ public struct ContentView: View {
                                 }
                             }
                         }
+
+                        // 一鍵停止虛擬定位回到真實 GPS
+                        Button(action: {
+                            hideKeyboard()
+                            session.stopMocking()
+                        }) {
+                            Image(systemName: "location.slash.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(.red)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+                        }
                     }
                     .padding(.trailing, 16)
                     .padding(.bottom, 10)

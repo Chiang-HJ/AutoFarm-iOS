@@ -2,6 +2,7 @@ import Foundation
 import CoreLocation
 import Combine
 import SwiftUI
+import UIKit
 
 public final class AutoFarmSession: ObservableObject {
     public static let shared = AutoFarmSession()
@@ -74,9 +75,12 @@ public final class AutoFarmSession: ObservableObject {
         return min(currentRouteIndex, max(displayWaypoints.count - 1, 0))
     }
 
-    private var timer: Timer?
+    private var engineTimer: DispatchSourceTimer?
+    private let engineQueue = DispatchQueue(label: "com.autofarm.engine.timer", qos: .userInteractive)
     private var lastTickTime: TimeInterval = 0.0
+    private var lastPushTime: TimeInterval = 0.0
     private var waitAccumulatedMs: Double = 0.0
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     private init() {
         // Load default pairing if exists
@@ -87,6 +91,62 @@ public final class AutoFarmSession: ObservableObject {
         }
         self.isLoggedIn = UserDefaults.standard.bool(forKey: "AutoFarm_IsLoggedIn")
         self.loggedInUsername = UserDefaults.standard.string(forKey: "AutoFarm_LoggedInUser") ?? ""
+
+        setupLifecycleObservers()
+    }
+
+    private func setupLifecycleObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleAppDidEnterBackground() {
+        guard isSimulatingLocation else { return }
+        startBackgroundTask()
+        pushCurrentLocation()
+        SilentAudioKeepAlive.shared.ensurePlaying()
+    }
+
+    @objc private func handleAppWillEnterForeground() {
+        endBackgroundTask()
+        if isSimulatingLocation {
+            pushCurrentLocation()
+            SilentAudioKeepAlive.shared.ensurePlaying()
+        }
+    }
+
+    private func startBackgroundTask() {
+        endBackgroundTask()
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "AutoFarmEngineAnchor") { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        if backgroundTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            backgroundTaskID = .invalid
+        }
+    }
+
+    public func backgroundTickKeepAlive() {
+        guard isSimulatingLocation else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        if now - lastPushTime >= 0.8 {
+            lastPushTime = now
+            pushCurrentLocation()
+        }
+        SilentAudioKeepAlive.shared.ensurePlaying()
     }
 
     // MARK: - Auth
@@ -493,9 +553,12 @@ public final class AutoFarmSession: ObservableObject {
     /// 停止虛擬定位模擬 (徹底停止 DVT，重置 locationd，整機還原真實 GPS 並自動置中真實位置)
     public func stopMocking() {
         stopRoute()
+        engineTimer?.cancel()
+        engineTimer = nil
         _ = LocationEngine.clear(pairingPath: pairingFilePath, deviceIP: deviceIP)
         SilentAudioKeepAlive.shared.stop()
         BackgroundKeepAlive.shared.stop()
+        endBackgroundTask()
         self.isSimulatingLocation = false
         self.isRoutePaused = true
 
@@ -523,7 +586,9 @@ public final class AutoFarmSession: ObservableObject {
 
         self.currentLat = lat
         self.currentLng = lng
+        self.lastPushTime = Date().timeIntervalSinceReferenceDate
         pushCurrentLocation()
+        ensureEngineRunning()
 
         let pointLabel = label.isEmpty ? "自訂座標" : label
         SavedDatabaseStore.shared.addTeleportHistory(lat: lat, lng: lng, label: pointLabel)
@@ -565,11 +630,16 @@ public final class AutoFarmSession: ObservableObject {
     private func ensureEngineRunning() {
         SilentAudioKeepAlive.shared.start()
         BackgroundKeepAlive.shared.start()
-        if timer == nil {
+
+        if engineTimer == nil {
             lastTickTime = Date().timeIntervalSinceReferenceDate
-            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            let timer = DispatchSource.makeTimerSource(flags: .strict, queue: engineQueue)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(100), leeway: .milliseconds(10))
+            timer.setEventHandler { [weak self] in
                 self?.engineTick()
             }
+            timer.resume()
+            self.engineTimer = timer
         }
     }
 
@@ -644,7 +714,14 @@ public final class AutoFarmSession: ObservableObject {
             if executionMode == 4 {
                 CruiseTrajectoryTracker.shared.record(lat: currentLat, lng: currentLng, speedKmh: speedKmh)
             }
+            lastPushTime = now
             pushCurrentLocation()
+        } else if isSimulatingLocation {
+            // 靜態錨定心跳 (Stationary Anchor Heartbeat)：每 1 秒重新向 locationd 注入當前座標
+            if now - lastPushTime >= 1.0 {
+                lastPushTime = now
+                pushCurrentLocation()
+            }
         }
     }
 
@@ -726,6 +803,8 @@ public final class AutoFarmSession: ObservableObject {
             switch result {
             case .success:
                 self.isSimulatingLocation = true
+                self.lastPushTime = Date().timeIntervalSinceReferenceDate
+                self.ensureEngineRunning()
                 self.showToast("通道握手成功！可開回行動數據開始巡航")
             case .failure(let err):
                 self.isSimulatingLocation = false

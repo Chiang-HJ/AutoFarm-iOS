@@ -5,12 +5,15 @@ import UIKit
 public struct ContentView: View {
     @StateObject private var session = AutoFarmSession.shared
     @ObservedObject private var db = SavedDatabaseStore.shared
+    @ObservedObject private var clipboard = ClipboardDetector.shared
+    @ObservedObject private var logManager = MushroomLogManager.shared
 
     @State private var searchInput: String = ""
     @State private var isSharePresented: Bool = false
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
     @State private var isBlockedMushroomPresented: Bool = false
+    @State private var isMushroomScanPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -72,6 +75,15 @@ public struct ContentView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 44) // 避開 Dynamic Island / 狀態列
 
+                // 剪貼簿座標即時感測懸浮橫幅
+                if let item = clipboard.activeItem {
+                    clipboardBanner(item: item)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 6)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(100)
+                }
+
                 // 狀態懸浮 HUD 膠囊
                 StatusHUDView()
                     .padding(.top, 6)
@@ -126,6 +138,29 @@ public struct ContentView: View {
                                 .clipShape(Circle())
                                 .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
                         }
+
+                        // 掃菇模式 (800 km/h 巡航 + 自動跳轉皮克敏)
+                        Button(action: {
+                            hideKeyboard()
+                            self.isMushroomScanPresented = true
+                        }) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "camera.macro")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.purple)
+                                    .frame(width: 44, height: 44)
+                                    .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                    .clipShape(Circle())
+                                    .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+
+                                if logManager.unreadCount > 0 {
+                                    Circle()
+                                        .fill(Color.red)
+                                        .frame(width: 10, height: 10)
+                                        .offset(x: -2, y: 2)
+                                }
+                            }
+                        }
                     }
                     .padding(.trailing, 16)
                     .padding(.bottom, 10)
@@ -173,6 +208,10 @@ public struct ContentView: View {
         }
         .onAppear {
             checkUncompletedProgress()
+            clipboard.checkClipboardOnForeground()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            clipboard.checkClipboardOnForeground()
         }
         .sheet(isPresented: $isDatabasePresented) {
             DatabaseSheet()
@@ -185,6 +224,9 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isBlockedMushroomPresented) {
             BlockedMushroomView()
+        }
+        .sheet(isPresented: $isMushroomScanPresented) {
+            MushroomScanView()
         }
     }
 
@@ -564,6 +606,88 @@ public struct ContentView: View {
         .cornerRadius(16)
         .shadow(radius: 12)
         .padding(.horizontal, 24)
+    }
+
+    // MARK: - 剪貼簿座標偵測懸浮橫幅
+    private func clipboardBanner(item: DetectedClipboardItem) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.on.clipboard.fill")
+                .foregroundColor(.blue)
+                .font(.system(size: 16))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("偵測到剪貼簿座標")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.primary)
+                    if let label = item.label, !label.isEmpty {
+                        Text(label)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.12))
+                            .cornerRadius(4)
+                    }
+                }
+                Text("\(String(format: "%.5f", item.lat)), \(String(format: "%.5f", item.lng))")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            // 瞬移
+            Button(action: {
+                withAnimation {
+                    clipboard.markHandled()
+                    session.teleport(to: item.lat, lng: item.lng, label: item.label ?? "剪貼簿座標")
+                    session.centerCameraOnCurrentLocation()
+                }
+            }) {
+                Text("瞬移")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.blue)
+                    .cornerRadius(6)
+            }
+
+            // 存入座標庫
+            Button(action: {
+                withAnimation {
+                    clipboard.markHandled()
+                    db.addLocation(name: item.label ?? "剪貼簿座標", latitude: item.lat, longitude: item.lng)
+                    session.toastMessage = "已將座標存入常用座標庫！"
+                }
+            }) {
+                Text("儲存")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(6)
+            }
+
+            // 忽略
+            Button(action: {
+                withAnimation {
+                    clipboard.dismiss()
+                }
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(5)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(UIColor.systemBackground).opacity(0.96))
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.15), radius: 6, x: 0, y: 3)
     }
 
     private func handleCoordinateSearch() {

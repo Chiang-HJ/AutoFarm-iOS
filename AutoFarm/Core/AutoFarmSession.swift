@@ -212,6 +212,29 @@ public final class AutoFarmSession: ObservableObject {
         showToast("已啟動同心圓種花 (\(nodes.count) 點，無限循環)")
     }
 
+    /// 啟動 800 km/h 掃菇巡航模式
+    public func startMushroomScanRoute(name: String, basePoints: [RouteNode], speedKmh: Double = 800.0) {
+        guard !basePoints.isEmpty else { return }
+        self.originalBasePoints = basePoints
+        self.routePoints = basePoints
+        self.activeRouteName = name
+        self.routeLoopTarget = 0 // 無限循環
+        self.routeCurrentLoop = 0
+        self.executionMode = 4 // 4: 掃菇巡航
+        self.speedKmh = speedKmh
+        self.currentRouteIndex = 0
+        self.currentLat = basePoints[0].lat
+        self.currentLng = basePoints[0].lng
+        self.isRoutePaused = false
+        self.cooldownRemainingSec = 0
+        self.waitAccumulatedMs = 0.0
+
+        CruiseTrajectoryTracker.shared.clear()
+        pushCurrentLocation()
+        ensureEngineRunning()
+        showToast("已啟動掃菇巡航 (\(basePoints.count) 點，時速 \(Int(speedKmh)) km/h)")
+    }
+
     /// 執行指定歷史紀錄項目 (支援單點瞬移、直線循跡、繞圈種花、跳收果實、同心圓)
     public func executeHistoryItem(_ item: LocationHistoryItem) {
         switch item.type {
@@ -609,6 +632,9 @@ public final class AutoFarmSession: ObservableObject {
         }
 
         if isMoving {
+            if executionMode == 4 {
+                CruiseTrajectoryTracker.shared.record(lat: currentLat, lng: currentLng, speedKmh: speedKmh)
+            }
             pushCurrentLocation()
         }
     }

@@ -7,24 +7,36 @@ public struct DatabaseSheet: View {
     @Environment(\.dismiss) var dismiss
 
     @State private var selectedTab: Int = 0 // 0: 座標庫, 1: 路徑庫, 2: 瞬移紀錄
+    @State private var searchText: String = ""
+    @State private var sortMode: DatabaseSortMode = .pinFirst
+
+    // 批次檔案匯入
     @State private var isFileImporterPresented: Bool = false
     @State private var isPasteImportPresented: Bool = false
     @State private var pasteRouteName: String = ""
     @State private var pasteRouteTag: String = ""
     @State private var pasteCoordinatesText: String = ""
 
+    // 全庫備份與還原
+    @State private var isRestoreImporterPresented: Bool = false
+    @State private var backupShareUrl: URL? = nil
+    @State private var isShareBackupPresented: Bool = false
+
+    // 新增座標
     @State private var isAddLocationPresented: Bool = false
     @State private var newLocName: String = ""
     @State private var newLocTag: String = ""
+    @State private var newLocNote: String = ""
     @State private var newLocLat: String = ""
     @State private var newLocLng: String = ""
 
-    // 標籤編輯
-    @State private var isEditTagPresented: Bool = false
+    // 標籤與備忘錄編輯
+    @State private var isEditTagAndNotePresented: Bool = false
     @State private var editingItemId: UUID? = nil
     @State private var editingItemIsRoute: Bool = false
     @State private var editingItemTitle: String = ""
     @State private var editingTagText: String = ""
+    @State private var editingNoteText: String = ""
 
     // 路線進度詢問 ActionSheet
     @State private var isResumeRouteChoicePresented: Bool = false
@@ -44,7 +56,11 @@ public struct DatabaseSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
+
+                if selectedTab == 0 || selectedTab == 1 {
+                    searchAndSortBar
+                }
 
                 if selectedTab == 0 {
                     locationsView
@@ -57,8 +73,9 @@ public struct DatabaseSheet: View {
             .navigationTitle("座標與路徑資料庫")
             .navigationBarItems(
                 leading: Button("關閉") { dismiss() },
-                trailing: headerTrailingButton
+                trailing: headerTrailingActions
             )
+            // 批次匯入 GPX/CSV/TXT (支援多選)
             .fileImporter(
                 isPresented: $isFileImporterPresented,
                 allowedContentTypes: [
@@ -68,19 +85,40 @@ public struct DatabaseSheet: View {
                     UTType.text,
                     UTType.data
                 ],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard !urls.isEmpty else { return }
+                    let (successCount, failedCount, names) = db.importRoutesFromFiles(urls: urls)
+                    if successCount > 0 {
+                        let sample = names.prefix(3).joined(separator: ", ")
+                        session.toastMessage = "成功批次匯入 \(successCount) 條路線！[\(sample)\(names.count > 3 ? "..." : "")]"
+                    } else {
+                        session.toastMessage = "匯入失敗，選取檔案中未包含有效座標"
+                    }
+                case .failure(let err):
+                    session.toastMessage = "選取檔案失敗: \(err.localizedDescription)"
+                }
+            }
+            // 還原全庫備份 (JSON)
+            .fileImporter(
+                isPresented: $isRestoreImporterPresented,
+                allowedContentTypes: [UTType.json, UTType.data],
                 allowsMultipleSelection: false
             ) { result in
                 switch result {
                 case .success(let urls):
                     guard let url = urls.first else { return }
-                    let (success, name, count, error) = db.importRouteFromFile(url: url)
-                    if success {
-                        session.toastMessage = "成功匯入路線【\(name)】共 \(count) 點！"
-                    } else {
-                        session.toastMessage = error ?? "匯入失敗"
-                    }
+                    let (ok, msg) = db.restoreFullBackup(from: url, merge: false)
+                    session.toastMessage = msg
                 case .failure(let err):
-                    session.toastMessage = "選取檔案失敗: \(err.localizedDescription)"
+                    session.toastMessage = "還原失敗: \(err.localizedDescription)"
+                }
+            }
+            .sheet(isPresented: $isShareBackupPresented) {
+                if let url = backupShareUrl {
+                    ActivityView(activityItems: [url])
                 }
             }
             .sheet(isPresented: $isPasteImportPresented) {
@@ -89,8 +127,8 @@ public struct DatabaseSheet: View {
             .sheet(isPresented: $isAddLocationPresented) {
                 addLocationSheet
             }
-            .sheet(isPresented: $isEditTagPresented) {
-                editTagSheet
+            .sheet(isPresented: $isEditTagAndNotePresented) {
+                editTagAndNoteSheet
             }
             .sheet(item: $selectedRouteForConfig) { route in
                 RouteModeConfigSheet(route: route) { mode, loopMode, loops, flowerSettings, fruitWalkDist in
@@ -103,15 +141,110 @@ public struct DatabaseSheet: View {
         }
     }
 
+    // MARK: - 搜尋與排序欄
+    private var searchAndSortBar: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 13))
+                TextField("搜尋名稱、標籤或經緯度...", text: $searchText)
+                    .font(.system(size: 13))
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 13))
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(8)
+
+            Menu {
+                ForEach(DatabaseSortMode.allCases) { mode in
+                    Button(action: { sortMode = mode }) {
+                        HStack {
+                            Text(mode.rawValue)
+                            if sortMode == mode {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 12))
+                    Text(sortMode.rawValue)
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(Color(UIColor.secondarySystemBackground))
+                .foregroundColor(.primary)
+                .cornerRadius(8)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 6)
+    }
+
+    // MARK: - 頂部動作群 (加號 + 全庫備份選單)
+    private var headerTrailingActions: some View {
+        HStack(spacing: 12) {
+            if selectedTab == 0 {
+                Button(action: {
+                    newLocName = ""
+                    newLocTag = ""
+                    newLocNote = ""
+                    newLocLat = "\(session.currentLat)"
+                    newLocLng = "\(session.currentLng)"
+                    isAddLocationPresented = true
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .bold))
+                }
+            }
+
+            Menu {
+                Section(header: Text("全資料庫備份管理")) {
+                    Button(action: {
+                        if let url = db.exportFullBackup() {
+                            backupShareUrl = url
+                            isShareBackupPresented = true
+                        } else {
+                            session.toastMessage = "匯出備份失敗"
+                        }
+                    }) {
+                        Label("匯出全庫備份 (JSON)", systemImage: "square.and.arrow.up")
+                    }
+
+                    Button(action: {
+                        isRestoreImporterPresented = true
+                    }) {
+                        Label("還原全庫備份 (JSON)", systemImage: "square.and.arrow.down")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 16))
+            }
+        }
+    }
+
     // MARK: - 座標庫視圖
     private var locationsView: some View {
-        List {
-            if db.sortedLocations.isEmpty {
-                Text("尚未儲存任何座標。可在地圖長按或點右上角新增按鈕儲存。")
+        let list = db.filteredLocations(query: searchText, sortMode: sortMode)
+        return List {
+            if list.isEmpty {
+                Text(searchText.isEmpty ? "尚未儲存任何座標。可在地圖長按或點右上角新增按鈕儲存。" : "無符合搜尋條件的座標。")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             } else {
-                ForEach(db.sortedLocations) { loc in
+                ForEach(list) { loc in
                     HStack(spacing: 8) {
                         Button(action: {
                             db.togglePinLocation(id: loc.id)
@@ -145,6 +278,13 @@ public struct DatabaseSheet: View {
                                     Text("\(String(format: "%.6f", loc.latitude)), \(String(format: "%.6f", loc.longitude))")
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundColor(.secondary)
+
+                                    if !loc.note.isEmpty {
+                                        Text(loc.note)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
                                 }
                                 Spacer()
                                 Text("瞬移")
@@ -159,9 +299,9 @@ public struct DatabaseSheet: View {
                         }
 
                         Button(action: {
-                            openEditTag(id: loc.id, isRoute: false, currentTitle: loc.name, currentTag: loc.tag)
+                            openEditTagAndNote(id: loc.id, isRoute: false, currentTitle: loc.name, currentTag: loc.tag, currentNote: loc.note)
                         }) {
-                            Image(systemName: "tag")
+                            Image(systemName: loc.note.isEmpty ? "square.and.pencil" : "note.text")
                                 .font(.system(size: 13))
                                 .foregroundColor(.secondary)
                         }
@@ -169,9 +309,8 @@ public struct DatabaseSheet: View {
                     }
                 }
                 .onDelete { indexSet in
-                    let sorted = db.sortedLocations
                     for i in indexSet {
-                        let id = sorted[i].id
+                        let id = list[i].id
                         db.deleteLocation(id: id)
                     }
                 }
@@ -182,17 +321,18 @@ public struct DatabaseSheet: View {
 
     // MARK: - 路徑庫視圖
     private var routesView: some View {
-        VStack(spacing: 0) {
-            // 匯入捷徑列 (檔案匯入 + 貼上匯入)
+        let list = db.filteredRoutes(query: searchText, sortMode: sortMode)
+        return VStack(spacing: 0) {
+            // 匯入捷徑列 (支援多選批次檔案匯入 + 貼上匯入)
             HStack(spacing: 8) {
                 Button(action: { isFileImporterPresented = true }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.down.fill")
-                        Text("匯入 GPX/CSV/TXT")
-                            .font(.system(size: 13, weight: .bold))
+                        Image(systemName: "square.and.arrow.down.on.square.fill")
+                        Text("批次匯入 GPX/CSV/TXT")
+                            .font(.system(size: 12, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 9)
                     .background(Color.purple)
                     .foregroundColor(.white)
                     .cornerRadius(10)
@@ -207,25 +347,25 @@ public struct DatabaseSheet: View {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.on.clipboard.fill")
                         Text("貼上座標匯入")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 9)
                     .background(Color.blue)
                     .foregroundColor(.white)
                     .cornerRadius(10)
                 }
             }
             .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.bottom, 6)
 
             List {
-                if db.sortedRoutes.isEmpty {
-                    Text("尚未儲存任何路徑。可點擊上方按鈕匯入。")
+                if list.isEmpty {
+                    Text(searchText.isEmpty ? "尚未儲存任何路徑。可點擊上方按鈕批次匯入。" : "無符合搜尋條件的路徑。")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(db.sortedRoutes) { route in
+                    ForEach(list) { route in
                         HStack(spacing: 8) {
                             Button(action: {
                                 db.togglePinRoute(id: route.id)
@@ -267,6 +407,13 @@ public struct DatabaseSheet: View {
                                         Text("共 \(route.nodes.count) 個航點")
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
+
+                                        if !route.note.isEmpty {
+                                            Text(route.note)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                        }
                                     }
                                     Spacer()
                                     Text("設定 >")
@@ -277,9 +424,9 @@ public struct DatabaseSheet: View {
                             }
 
                             Button(action: {
-                                openEditTag(id: route.id, isRoute: true, currentTitle: route.name, currentTag: route.tag)
+                                openEditTagAndNote(id: route.id, isRoute: true, currentTitle: route.name, currentTag: route.tag, currentNote: route.note)
                             }) {
-                                Image(systemName: "tag")
+                                Image(systemName: route.note.isEmpty ? "square.and.pencil" : "note.text")
                                     .font(.system(size: 13))
                                     .foregroundColor(.secondary)
                             }
@@ -287,9 +434,8 @@ public struct DatabaseSheet: View {
                         }
                     }
                     .onDelete { indexSet in
-                        let sorted = db.sortedRoutes
                         for i in indexSet {
-                            let id = sorted[i].id
+                            let id = list[i].id
                             db.deleteRoute(id: id)
                         }
                     }
@@ -299,7 +445,7 @@ public struct DatabaseSheet: View {
         }
     }
 
-    // MARK: - 全方位歷史紀錄視圖 (點擊直接以該參數執行瞬移或路線)
+    // MARK: - 歷史紀錄視圖
     private var locationHistoryView: some View {
         VStack(spacing: 0) {
             if !db.locationHistory.isEmpty {
@@ -418,21 +564,6 @@ public struct DatabaseSheet: View {
         }
     }
 
-    @ViewBuilder
-    private var headerTrailingButton: some View {
-        if selectedTab == 0 {
-            Button(action: {
-                newLocName = ""
-                newLocTag = ""
-                newLocLat = "\(session.currentLat)"
-                newLocLng = "\(session.currentLng)"
-                isAddLocationPresented = true
-            }) {
-                Image(systemName: "plus")
-            }
-        }
-    }
-
     // MARK: - 路線處理
     private func handleRouteSelected(_ route: SavedRoute) {
         if RouteProgressStore.hasProgress(for: route.name) {
@@ -506,56 +637,52 @@ public struct DatabaseSheet: View {
         dismiss()
     }
 
-    // MARK: - 標籤編輯
-    private func openEditTag(id: UUID, isRoute: Bool, currentTitle: String, currentTag: String) {
+    // MARK: - 標籤與備忘錄編輯 Sheet
+    private func openEditTagAndNote(id: UUID, isRoute: Bool, currentTitle: String, currentTag: String, currentNote: String) {
         self.editingItemId = id
         self.editingItemIsRoute = isRoute
         self.editingItemTitle = currentTitle
         self.editingTagText = currentTag
-        self.isEditTagPresented = true
+        self.editingNoteText = currentNote
+        self.isEditTagAndNotePresented = true
     }
 
-    private var editTagSheet: some View {
+    private var editTagAndNoteSheet: some View {
         NavigationView {
             Form {
-                Section(header: Text("編輯標籤分類")) {
+                Section(header: Text("項目資訊")) {
                     Text(editingItemTitle)
                         .font(.headline)
-                    TextField("輸入標籤分類名稱 (例：花苞區、日常補給)", text: $editingTagText)
+                }
+
+                Section(header: Text("標籤分類")) {
+                    TextField("標籤名稱 (例：花苞區、日常補給)", text: $editingTagText)
+                }
+
+                Section(header: Text("備忘錄筆記 (Notes)")) {
+                    TextEditor(text: $editingNoteText)
+                        .frame(minHeight: 100)
                 }
 
                 Section {
-                    Button("儲存標籤") {
+                    Button("儲存變更") {
                         if let id = editingItemId {
                             if editingItemIsRoute {
                                 db.updateRouteTag(id: id, tag: editingTagText)
+                                db.updateRouteNote(id: id, note: editingNoteText)
                             } else {
                                 db.updateLocationTag(id: id, tag: editingTagText)
+                                db.updateLocationNote(id: id, note: editingNoteText)
                             }
                         }
-                        isEditTagPresented = false
+                        isEditTagAndNotePresented = false
                     }
                     .frame(maxWidth: .infinity)
                     .foregroundColor(.blue)
-
-                    if !editingTagText.isEmpty {
-                        Button("清除標籤") {
-                            if let id = editingItemId {
-                                if editingItemIsRoute {
-                                    db.updateRouteTag(id: id, tag: "")
-                                } else {
-                                    db.updateLocationTag(id: id, tag: "")
-                                }
-                            }
-                            isEditTagPresented = false
-                        }
-                        .frame(maxWidth: .infinity)
-                        .foregroundColor(.red)
-                    }
                 }
             }
-            .navigationTitle("標籤設定")
-            .navigationBarItems(leading: Button("取消") { isEditTagPresented = false })
+            .navigationTitle("編輯標籤與備忘錄")
+            .navigationBarItems(leading: Button("取消") { isEditTagAndNotePresented = false })
         }
     }
 
@@ -607,6 +734,7 @@ public struct DatabaseSheet: View {
                 Section(header: Text("座標名稱與標籤")) {
                     TextField("名稱 (例如：信義威秀大花苞)", text: $newLocName)
                     TextField("標籤分類 (選填，例如：花苞、補給站)", text: $newLocTag)
+                    TextField("備忘錄筆記 (選填)", text: $newLocNote)
                 }
                 Section(header: Text("經緯度")) {
                     TextField("緯度 (Latitude)", text: $newLocLat)
@@ -617,7 +745,7 @@ public struct DatabaseSheet: View {
                 Section {
                     Button("儲存此座標") {
                         if let lat = Double(newLocLat), let lng = Double(newLocLng) {
-                            db.addLocation(name: newLocName, latitude: lat, longitude: lng, tag: newLocTag)
+                            db.addLocation(name: newLocName, latitude: lat, longitude: lng, tag: newLocTag, note: newLocNote)
                             isAddLocationPresented = false
                             session.toastMessage = "座標已儲存"
                         }
@@ -628,4 +756,15 @@ public struct DatabaseSheet: View {
             .navigationBarItems(leading: Button("取消") { isAddLocationPresented = false })
         }
     }
+}
+
+// MARK: - 原生分享控制器封裝
+public struct ActivityView: UIViewControllerRepresentable {
+    public let activityItems: [Any]
+
+    public func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

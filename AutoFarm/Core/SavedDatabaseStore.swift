@@ -2,6 +2,16 @@ import Foundation
 import Combine
 import CoreLocation
 
+public enum DatabaseSortMode: String, CaseIterable, Identifiable {
+    case pinFirst = "置頂優先"
+    case nameAsc = "名稱 A → Z"
+    case nameDesc = "名稱 Z → A"
+    case timeDesc = "時間 新 → 舊"
+    case timeAsc = "時間 舊 → 新"
+
+    public var id: String { rawValue }
+}
+
 public struct SavedLocation: Identifiable, Codable, Equatable {
     public var id: UUID = UUID()
     public var name: String
@@ -9,6 +19,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
     public var longitude: Double
     public var isPinned: Bool = false
     public var tag: String = ""
+    public var note: String = ""
     public var createdAt: Date = Date()
 
     public init(
@@ -18,6 +29,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
         longitude: Double,
         isPinned: Bool = false,
         tag: String = "",
+        note: String = "",
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -26,6 +38,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
         self.longitude = longitude
         self.isPinned = isPinned
         self.tag = tag
+        self.note = note
         self.createdAt = createdAt
     }
 
@@ -37,6 +50,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude) ?? 121.564468
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.tag = try container.decodeIfPresent(String.self, forKey: .tag) ?? ""
+        self.note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
@@ -47,6 +61,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
     public var nodes: [RouteNode]
     public var isPinned: Bool = false
     public var tag: String = ""
+    public var note: String = ""
     public var createdAt: Date = Date()
 
     public init(
@@ -55,6 +70,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
         nodes: [RouteNode],
         isPinned: Bool = false,
         tag: String = "",
+        note: String = "",
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -62,6 +78,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
         self.nodes = nodes
         self.isPinned = isPinned
         self.tag = tag
+        self.note = note
         self.createdAt = createdAt
     }
 
@@ -72,6 +89,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
         self.nodes = try container.decodeIfPresent([RouteNode].self, forKey: .nodes) ?? []
         self.isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.tag = try container.decodeIfPresent(String.self, forKey: .tag) ?? ""
+        self.note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
@@ -161,6 +179,31 @@ public struct LocationHistoryItem: Identifiable, Codable, Equatable {
     }
 }
 
+public struct DatabaseBackupPayload: Codable {
+    public var version: Int = 1
+    public var exportDate: Date = Date()
+    public var savedLocations: [SavedLocation] = []
+    public var savedRoutes: [SavedRoute] = []
+    public var locationHistory: [LocationHistoryItem] = []
+    public var blockedMushrooms: [BlockedMushroomItem] = []
+
+    public init(
+        version: Int = 1,
+        exportDate: Date = Date(),
+        savedLocations: [SavedLocation],
+        savedRoutes: [SavedRoute],
+        locationHistory: [LocationHistoryItem],
+        blockedMushrooms: [BlockedMushroomItem]
+    ) {
+        self.version = version
+        self.exportDate = exportDate
+        self.savedLocations = savedLocations
+        self.savedRoutes = savedRoutes
+        self.locationHistory = locationHistory
+        self.blockedMushrooms = blockedMushrooms
+    }
+}
+
 public final class SavedDatabaseStore: ObservableObject {
     public static let shared = SavedDatabaseStore()
 
@@ -176,20 +219,66 @@ public final class SavedDatabaseStore: ObservableObject {
     private let hasEverInitializedKey = "com.autofarm.has_initialized_defaults_v2"
 
     public var sortedLocations: [SavedLocation] {
-        savedLocations.sorted {
-            if $0.isPinned != $1.isPinned {
-                return $0.isPinned && !$1.isPinned
-            }
-            return $0.createdAt > $1.createdAt
-        }
+        filteredLocations(query: "", sortMode: .pinFirst)
     }
 
     public var sortedRoutes: [SavedRoute] {
-        savedRoutes.sorted {
-            if $0.isPinned != $1.isPinned {
-                return $0.isPinned && !$1.isPinned
+        filteredRoutes(query: "", sortMode: .pinFirst)
+    }
+
+    public func filteredLocations(query: String = "", sortMode: DatabaseSortMode = .pinFirst) -> [SavedLocation] {
+        var list = savedLocations
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !q.isEmpty {
+            list = list.filter {
+                $0.name.lowercased().contains(q) ||
+                $0.tag.lowercased().contains(q) ||
+                $0.note.lowercased().contains(q) ||
+                String(format: "%.5f", $0.latitude).contains(q) ||
+                String(format: "%.5f", $0.longitude).contains(q)
             }
-            return $0.createdAt > $1.createdAt
+        }
+        return list.sorted { a, b in
+            switch sortMode {
+            case .pinFirst:
+                if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
+                return a.createdAt > b.createdAt
+            case .nameAsc:
+                return a.name.localizedStandardCompare(b.name) == .orderedAscending
+            case .nameDesc:
+                return a.name.localizedStandardCompare(b.name) == .orderedDescending
+            case .timeDesc:
+                return a.createdAt > b.createdAt
+            case .timeAsc:
+                return a.createdAt < b.createdAt
+            }
+        }
+    }
+
+    public func filteredRoutes(query: String = "", sortMode: DatabaseSortMode = .pinFirst) -> [SavedRoute] {
+        var list = savedRoutes
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !q.isEmpty {
+            list = list.filter {
+                $0.name.lowercased().contains(q) ||
+                $0.tag.lowercased().contains(q) ||
+                $0.note.lowercased().contains(q)
+            }
+        }
+        return list.sorted { a, b in
+            switch sortMode {
+            case .pinFirst:
+                if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
+                return a.createdAt > b.createdAt
+            case .nameAsc:
+                return a.name.localizedStandardCompare(b.name) == .orderedAscending
+            case .nameDesc:
+                return a.name.localizedStandardCompare(b.name) == .orderedDescending
+            case .timeDesc:
+                return a.createdAt > b.createdAt
+            case .timeAsc:
+                return a.createdAt < b.createdAt
+            }
         }
     }
 
@@ -198,10 +287,10 @@ public final class SavedDatabaseStore: ObservableObject {
     }
 
     // MARK: - 座標庫管理
-    public func addLocation(name: String, latitude: Double, longitude: Double, tag: String = "") {
+    public func addLocation(name: String, latitude: Double, longitude: Double, tag: String = "", note: String = "") {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? "未命名座標 \(savedLocations.count + 1)" : trimmed
-        let loc = SavedLocation(name: finalName, latitude: latitude, longitude: longitude, tag: tag)
+        let loc = SavedLocation(name: finalName, latitude: latitude, longitude: longitude, tag: tag, note: note)
         savedLocations.insert(loc, at: 0)
         saveLocations()
     }
@@ -225,12 +314,19 @@ public final class SavedDatabaseStore: ObservableObject {
         }
     }
 
+    public func updateLocationNote(id: UUID, note: String) {
+        if let idx = savedLocations.firstIndex(where: { $0.id == id }) {
+            savedLocations[idx].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            saveLocations()
+        }
+    }
+
     // MARK: - 路徑庫管理
-    public func saveRoute(name: String, nodes: [RouteNode], tag: String = "") {
+    public func saveRoute(name: String, nodes: [RouteNode], tag: String = "", note: String = "") {
         guard !nodes.isEmpty else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? "未命名路線 \(savedRoutes.count + 1)" : trimmed
-        let r = SavedRoute(name: finalName, nodes: nodes, tag: tag)
+        let r = SavedRoute(name: finalName, nodes: nodes, tag: tag, note: note)
         savedRoutes.insert(r, at: 0)
         saveRoutes()
     }
@@ -250,6 +346,13 @@ public final class SavedDatabaseStore: ObservableObject {
     public func updateRouteTag(id: UUID, tag: String) {
         if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
             savedRoutes[idx].tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            saveRoutes()
+        }
+    }
+
+    public func updateRouteNote(id: UUID, note: String) {
+        if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
+            savedRoutes[idx].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
             saveRoutes()
         }
     }
@@ -377,6 +480,107 @@ public final class SavedDatabaseStore: ObservableObject {
 
         saveRoute(name: fileName, nodes: nodes, tag: tag)
         return (true, fileName, nodes.count, nil)
+    }
+
+    /// 批次從多個檔案 URL 匯入路線 (支援多選 GPX, CSV, TXT)
+    public func importRoutesFromFiles(urls: [URL], tag: String = "") -> (successCount: Int, failedCount: Int, importedNames: [String]) {
+        var successCount = 0
+        var failedCount = 0
+        var importedNames: [String] = []
+
+        for url in urls {
+            let res = importRouteFromFile(url: url, tag: tag)
+            if res.success {
+                successCount += 1
+                importedNames.append(res.name)
+            } else {
+                failedCount += 1
+            }
+        }
+        return (successCount, failedCount, importedNames)
+    }
+
+    // MARK: - 全庫備份與還原 (JSON)
+
+    /// 匯出全庫完整備份檔 (JSON 格式，包含座標、路線、歷史紀錄與卡菇資料)
+    public func exportFullBackup() -> URL? {
+        let payload = DatabaseBackupPayload(
+            savedLocations: self.savedLocations,
+            savedRoutes: self.savedRoutes,
+            locationHistory: self.locationHistory,
+            blockedMushrooms: BlockedMushroomManager.shared.items
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(payload) else { return nil }
+
+        let df = DateFormatter()
+        df.dateFormat = "yyyyMMdd_HHmmss"
+        let dateStr = df.string(from: Date())
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent("AutoFarm_Backup_\(dateStr).json")
+
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch {
+            return nil
+        }
+    }
+
+    /// 從 JSON 備份檔還原全庫資料 (merge=true 為合併新增，merge=false 為完全覆蓋)
+    public func restoreFullBackup(from url: URL, merge: Bool = false) -> (success: Bool, message: String) {
+        let isSecured = url.startAccessingSecurityScopedResource()
+        defer {
+            if isSecured { url.stopAccessingSecurityScopedResource() }
+        }
+
+        guard let data = try? Data(contentsOf: url) else {
+            return (false, "無法讀取備份檔案")
+        }
+
+        guard let payload = try? JSONDecoder().decode(DatabaseBackupPayload.self, from: data) else {
+            return (false, "備份檔案格式無效或已損壞")
+        }
+
+        if merge {
+            for loc in payload.savedLocations {
+                if !savedLocations.contains(where: { $0.id == loc.id }) {
+                    savedLocations.append(loc)
+                }
+            }
+            for r in payload.savedRoutes {
+                if !savedRoutes.contains(where: { $0.id == r.id }) {
+                    savedRoutes.append(r)
+                }
+            }
+            for h in payload.locationHistory {
+                if !locationHistory.contains(where: { $0.id == h.id }) {
+                    locationHistory.append(h)
+                }
+            }
+            for m in payload.blockedMushrooms {
+                if !BlockedMushroomManager.shared.items.contains(where: { $0.id == m.id }) {
+                    BlockedMushroomManager.shared.addItem(m)
+                }
+            }
+        } else {
+            self.savedLocations = payload.savedLocations
+            self.savedRoutes = payload.savedRoutes
+            self.locationHistory = payload.locationHistory
+            BlockedMushroomManager.shared.items = payload.blockedMushrooms
+            BlockedMushroomManager.shared.saveItems()
+        }
+
+        saveLocations()
+        saveRoutes()
+        saveHistory()
+
+        let totalLocs = payload.savedLocations.count
+        let totalRoutes = payload.savedRoutes.count
+        let totalMushrooms = payload.blockedMushrooms.count
+        return (true, "還原成功！已載入 \(totalLocs) 個座標、\(totalRoutes) 條路線、\(totalMushrooms) 個卡菇紀錄。")
     }
 
     // MARK: - 內部解析工具

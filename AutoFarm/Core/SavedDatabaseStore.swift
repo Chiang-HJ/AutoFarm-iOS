@@ -570,7 +570,7 @@ public final class SavedDatabaseStore: ObservableObject {
             self.savedRoutes = payload.savedRoutes
             self.locationHistory = payload.locationHistory
             BlockedMushroomManager.shared.items = payload.blockedMushrooms
-            BlockedMushroomManager.shared.saveItems()
+            BlockedMushroomManager.shared.saveData()
         }
 
         saveLocations()

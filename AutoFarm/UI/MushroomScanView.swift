@@ -297,6 +297,7 @@ public struct MushroomScanView: View {
         }
     }
 
+    @ViewBuilder
     private var trailingButton: some View {
         if selectedTab == 0 && scanManager.isScanning {
             Button(action: {
@@ -308,8 +309,6 @@ public struct MushroomScanView: View {
                         .font(.system(size: 12, weight: .bold))
                 }
             }
-        } else {
-            EmptyView()
         }
     }
 

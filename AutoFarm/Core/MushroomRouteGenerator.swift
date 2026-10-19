@@ -121,17 +121,17 @@ public enum MushroomRouteGenerator {
                     var currLng = span.0
                     let endLng = span.1
                     while currLng <= endLng + (lngStep * 0.1) {
-                        rowPoints.append(RouteNode(lat: currLat, lng: currLng, isTeleport: false, waitTimeSec: 0))
+                        rowPoints.append(RouteNode(lat: currLat, lng: currLng, waitTimeSec: 0, isTeleport: false))
                         currLng += lngStep
                     }
                     if rowPoints.isEmpty || rowPoints.last?.lng != endLng {
-                        rowPoints.append(RouteNode(lat: currLat, lng: endLng, isTeleport: false, waitTimeSec: 0))
+                        rowPoints.append(RouteNode(lat: currLat, lng: endLng, waitTimeSec: 0, isTeleport: false))
                     }
                 }
             } else {
                 var currLng = minLng
                 while currLng <= maxLng + (lngStep * 0.1) {
-                    rowPoints.append(RouteNode(lat: currLat, lng: currLng, isTeleport: false, waitTimeSec: 0))
+                    rowPoints.append(RouteNode(lat: currLat, lng: currLng, waitTimeSec: 0, isTeleport: false))
                     currLng += lngStep
                 }
             }

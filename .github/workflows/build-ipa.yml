@@ -37,7 +37,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            SYMROOT=$PWD/build 2>&1 | tee build.log || (echo "=== BUILD ERROR SUMMARY ===" && grep -C 3 -i "error:" build.log && exit 1)
+            SYMROOT=$PWD/build 2>&1 | tee build.log || {
+              echo "## Build Error Summary" >> $GITHUB_STEP_SUMMARY
+              echo '```text' >> $GITHUB_STEP_SUMMARY
+              grep -C 3 -i "error:" build.log | tail -n 60 >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 1
+            }
 
       - name: Package into IPA
         run: |
@@ -52,3 +58,10 @@ jobs:
         with:
           name: AutoFarm-iOS-ipa
           path: AutoFarm-iOS.ipa
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log

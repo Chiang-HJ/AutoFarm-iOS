@@ -183,8 +183,12 @@ public struct ContentView: View {
             }
         }
         .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true
             checkUncompletedProgress()
             clipboard.checkClipboardOnForeground()
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             clipboard.checkClipboardOnForeground()

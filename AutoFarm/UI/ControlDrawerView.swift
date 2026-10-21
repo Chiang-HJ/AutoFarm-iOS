@@ -665,17 +665,6 @@ public struct ControlDrawerView: View {
                                     }
                                 }
 
-                                // 編輯路線點位
-                                Button(action: {
-                                    hideKeyboard()
-                                    self.routeToEdit = route
-                                }) {
-                                    Image(systemName: "list.bullet.indent")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.blue)
-                                        .frame(width: 24, height: 24)
-                                }
-
                                 // 編輯標籤
                                 Button(action: {
                                     hideKeyboard()

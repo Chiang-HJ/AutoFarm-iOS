@@ -208,6 +208,10 @@ enum LocationEngine {
             lastDetailedError = "RemoteXPC 握手失敗: \(detail)"
             return remoteServerCode
         }
+        // adapter 與 handshake 已被 Rust 端接管消耗，立即置空避免 cleanup 重複釋放導致 Crash
+        adapter = nil
+        handshake = nil
+
         // 連線成功後儲存更新後的配對資料
         let savePath = pairingPath.isEmpty ? PairingStore.shared.pairingPath : pairingPath
         _ = savePath.withCString { rp_pairing_file_write(pairingHandle, $0) }

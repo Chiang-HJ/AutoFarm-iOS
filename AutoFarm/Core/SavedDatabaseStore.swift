@@ -354,6 +354,26 @@ public final class SavedDatabaseStore: ObservableObject {
         }
     }
 
+    public func updateRoute(id: UUID, name: String, nodes: [RouteNode], tag: String, note: String) {
+        if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedName.isEmpty {
+                savedRoutes[idx].name = trimmedName
+            }
+            savedRoutes[idx].nodes = nodes
+            savedRoutes[idx].tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            savedRoutes[idx].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            saveRoutes()
+        }
+    }
+
+    public func updateRouteNodes(id: UUID, nodes: [RouteNode]) {
+        if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
+            savedRoutes[idx].nodes = nodes
+            saveRoutes()
+        }
+    }
+
     // MARK: - 全方位定位與巡航歷史紀錄管理
     public func addTeleportHistory(lat: Double, lng: Double, label: String) {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)

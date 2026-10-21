@@ -626,75 +626,115 @@ public final class AutoFarmSession: ObservableObject {
         lastTickTime = now
 
         var isMoving = false
+        var nextLat = currentLat
+        var nextLng = currentLng
+        var nextCooldown = cooldownRemainingSec
+        var nextIndex = currentRouteIndex
+        var nextLoop = routeCurrentLoop
+        var shouldPause = isRoutePaused
+        var updatedWaitAccumMs = waitAccumulatedMs
+
         let stepDistMeters = (speedKmh / 3.6) * deltaSec
 
         // 1. 處理手動虛擬方向盤
         if joystickIntensity > 0 {
             let moveDist = stepDistMeters * joystickIntensity
-            let dest = EngineMath.moveLocation(lat: currentLat, lng: currentLng, distanceMeters: moveDist, bearingDegrees: joystickAngle)
-            self.currentLat = dest.lat
-            self.currentLng = dest.lng
+            let dest = EngineMath.moveLocation(lat: nextLat, lng: nextLng, distanceMeters: moveDist, bearingDegrees: joystickAngle)
+            nextLat = dest.lat
+            nextLng = dest.lng
             isMoving = true
         }
         // 2. 處理自動路線循跡
         else if !routePoints.isEmpty && !isRoutePaused {
-            if currentRouteIndex >= routePoints.count {
-                currentRouteIndex = routePoints.count - 1
-                isRoutePaused = true
+            if nextIndex >= routePoints.count {
+                nextIndex = max(0, routePoints.count - 1)
+                shouldPause = true
             } else {
-                let target = routePoints[currentRouteIndex]
+                let target = routePoints[nextIndex]
 
                 if target.isTeleport {
-                    self.currentLat = target.lat
-                    self.currentLng = target.lng
+                    nextLat = target.lat
+                    nextLng = target.lng
                     let targetWaitMs = Double(target.waitTimeSec * 1000)
 
-                    if targetWaitMs > 0 && waitAccumulatedMs < targetWaitMs {
-                        let remaining = Int(ceil((targetWaitMs - waitAccumulatedMs) / 1000.0))
-                        self.cooldownRemainingSec = max(remaining, 1)
-                        waitAccumulatedMs += (deltaSec * 1000.0)
+                    if targetWaitMs > 0 && updatedWaitAccumMs < targetWaitMs {
+                        let remaining = Int(ceil((targetWaitMs - updatedWaitAccumMs) / 1000.0))
+                        nextCooldown = max(remaining, 1)
+                        updatedWaitAccumMs += (deltaSec * 1000.0)
                     } else {
-                        self.cooldownRemainingSec = 0
-                        self.waitAccumulatedMs = 0.0
-                        advanceToNextWaypoint()
+                        nextCooldown = 0
+                        updatedWaitAccumMs = 0.0
+                        nextIndex += 1
+                        if nextIndex >= routePoints.count {
+                            let shouldLoop = (routeLoopTarget == 0) || (nextLoop < routeLoopTarget - 1)
+                            if shouldLoop {
+                                nextLoop += 1
+                                nextIndex = 0
+                            } else {
+                                shouldPause = true
+                            }
+                        }
                     }
                 } else {
-                    let distToTarget = EngineMath.getDistance(lat1: currentLat, lon1: currentLng, lat2: target.lat, lon2: target.lng)
+                    let distToTarget = EngineMath.getDistance(lat1: nextLat, lon1: nextLng, lat2: target.lat, lon2: target.lng)
 
                     if distToTarget <= stepDistMeters {
-                        self.currentLat = target.lat
-                        self.currentLng = target.lng
+                        nextLat = target.lat
+                        nextLng = target.lng
                         let targetWaitMs = Double(target.waitTimeSec * 1000)
 
-                        if targetWaitMs > 0 && waitAccumulatedMs < targetWaitMs {
-                            let remaining = Int(ceil((targetWaitMs - waitAccumulatedMs) / 1000.0))
-                            self.cooldownRemainingSec = max(remaining, 1)
-                            waitAccumulatedMs += (deltaSec * 1000.0)
+                        if targetWaitMs > 0 && updatedWaitAccumMs < targetWaitMs {
+                            let remaining = Int(ceil((targetWaitMs - updatedWaitAccumMs) / 1000.0))
+                            nextCooldown = max(remaining, 1)
+                            updatedWaitAccumMs += (deltaSec * 1000.0)
                         } else {
-                            self.cooldownRemainingSec = 0
-                            self.waitAccumulatedMs = 0.0
-                            advanceToNextWaypoint()
+                            nextCooldown = 0
+                            updatedWaitAccumMs = 0.0
+                            nextIndex += 1
+                            if nextIndex >= routePoints.count {
+                                let shouldLoop = (routeLoopTarget == 0) || (nextLoop < routeLoopTarget - 1)
+                                if shouldLoop {
+                                    nextLoop += 1
+                                    nextIndex = 0
+                                } else {
+                                    shouldPause = true
+                                }
+                            }
                         }
                     } else {
-                        self.cooldownRemainingSec = 0
-                        let bearing = EngineMath.getBearing(lat1: currentLat, lon1: currentLng, lat2: target.lat, lon2: target.lng)
-                        let dest = EngineMath.moveLocation(lat: currentLat, lng: currentLng, distanceMeters: stepDistMeters, bearingDegrees: bearing)
-                        self.currentLat = dest.lat
-                        self.currentLng = dest.lng
+                        nextCooldown = 0
+                        let bearing = EngineMath.getBearing(lat1: nextLat, lon1: nextLng, lat2: target.lat, lon2: target.lng)
+                        let dest = EngineMath.moveLocation(lat: nextLat, lng: nextLng, distanceMeters: stepDistMeters, bearingDegrees: bearing)
+                        nextLat = dest.lat
+                        nextLng = dest.lng
                         isMoving = true
                     }
                 }
             }
         }
 
+        self.waitAccumulatedMs = updatedWaitAccumMs
+
+        // 所有 @Published 狀態更新切回主執行緒，杜絕背景線程修改導致 MapKit 閃退
+        DispatchQueue.main.async {
+            self.currentLat = nextLat
+            self.currentLng = nextLng
+            self.cooldownRemainingSec = nextCooldown
+            self.currentRouteIndex = nextIndex
+            self.routeCurrentLoop = nextLoop
+            if self.isRoutePaused != shouldPause {
+                self.isRoutePaused = shouldPause
+            }
+        }
+
         if isMoving {
             lastPushTime = now
-            pushCurrentLocation()
+            pushCurrentLocation(lat: nextLat, lng: nextLng)
         } else if isSimulatingLocation {
             // 靜態錨定心跳 (Stationary Anchor Heartbeat)：每 1 秒重新向 locationd 注入當前座標
             if now - lastPushTime >= 1.0 {
                 lastPushTime = now
-                pushCurrentLocation()
+                pushCurrentLocation(lat: nextLat, lng: nextLng)
             }
         }
     }
@@ -739,25 +779,31 @@ public final class AutoFarmSession: ObservableObject {
         }
     }
 
-    private func pushCurrentLocation() {
+    private func pushCurrentLocation(lat: Double? = nil, lng: Double? = nil) {
         let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath
-        let result = LocationEngine.set(
-            latitude: currentLat,
-            longitude: currentLng,
-            pairingPath: pPath,
-            deviceIP: deviceIP
-        )
-        DispatchQueue.main.async {
-            switch result {
-            case .success:
-                self.pushFailureCount = 0
-                self.isSimulatingLocation = true
-            case .failure(let err):
-                self.pushFailureCount += 1
-                if self.pushFailureCount == 15 {
-                    self.isSimulatingLocation = false
-                    self.showToast("通道暫時斷開，正在重新連線...")
-                    print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
+        let targetLat = lat ?? currentLat
+        let targetLng = lng ?? currentLng
+        let devIP = deviceIP
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = LocationEngine.set(
+                latitude: targetLat,
+                longitude: targetLng,
+                pairingPath: pPath,
+                deviceIP: devIP
+            )
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.pushFailureCount = 0
+                    self.isSimulatingLocation = true
+                case .failure(let err):
+                    self.pushFailureCount += 1
+                    if self.pushFailureCount == 15 {
+                        self.isSimulatingLocation = false
+                        self.showToast("通道暫時斷開，正在重新連線...")
+                        print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
+                    }
                 }
             }
         }
@@ -767,22 +813,31 @@ public final class AutoFarmSession: ObservableObject {
     public func prepareConnection() {
         showToast("正在建立調試通道握手...")
         let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath
-        let result = LocationEngine.set(
-            latitude: currentLat,
-            longitude: currentLng,
-            pairingPath: pPath,
-            deviceIP: deviceIP
-        )
-        DispatchQueue.main.async {
-            switch result {
-            case .success:
-                self.isSimulatingLocation = true
-                self.lastPushTime = Date().timeIntervalSinceReferenceDate
-                self.ensureEngineRunning()
-                self.showToast("通道握手成功！可開回行動數據開始巡航")
-            case .failure(let err):
-                self.isSimulatingLocation = false
-                self.showToast("連線未就緒: \(err.localizedDescription)")
+        let targetLat = currentLat
+        let targetLng = currentLng
+        let devIP = deviceIP
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = LocationEngine.set(
+                latitude: targetLat,
+                longitude: targetLng,
+                pairingPath: pPath,
+                deviceIP: devIP
+            )
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.isSimulatingLocation = true
+                    self.lastPushTime = Date().timeIntervalSinceReferenceDate
+                    self.ensureEngineRunning()
+                    self.showToast("通道握手成功！可開回行動數據開始巡航")
+                case .failure(let err):
+                    self.isSimulatingLocation = false
+                    self.showToast("連線未就緒: \(err.localizedDescription)")
+                }
+            }
+        }
+    }
             }
         }
     }

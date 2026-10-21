@@ -4,6 +4,7 @@ public struct SettingsSheet: View {
     @ObservedObject var session = AutoFarmSession.shared
     @ObservedObject var pairService = PairOnDeviceService.shared
     @ObservedObject var pairingStore = PairingStore.shared
+    @ObservedObject var certManager = CertificateCountdownManager.shared
     @Environment(\.dismiss) var dismiss
 
     @State private var isTesting: Bool = false
@@ -12,11 +13,51 @@ public struct SettingsSheet: View {
     @State private var isShowingFilePicker: Bool = false
     @State private var importStatusMessage: String? = nil
 
+    private let dateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy/MM/dd HH:mm"
+        return df
+    }()
+
     public init() {}
 
     public var body: some View {
         NavigationView {
             Form {
+                Section(header: Text("IPA 簽名憑證狀態 (7 天自動倒數)")) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("免費開發者簽名有效期")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            if let exp = certManager.expirationDate {
+                                Text("預計到期: \(dateFormatter.string(from: exp))")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Spacer()
+
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(certManager.statusColor)
+                                .frame(width: 8, height: 8)
+                            Text(certManager.displayString)
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundColor(certManager.statusColor)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(certManager.statusColor.opacity(0.12))
+                        .cornerRadius(8)
+                    }
+
+                    Text("重新簽名覆蓋安裝後，倒數將自動重置為 7 天。")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
                 Section(header: Text("手機免電腦配對認證 (解決 Connection Reset 54)")) {
                     VStack(alignment: .leading, spacing: 12) {
                         switch pairService.phase {

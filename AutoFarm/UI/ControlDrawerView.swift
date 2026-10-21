@@ -35,6 +35,7 @@ public struct ControlDrawerView: View {
 
     // 路線模式參數設定 Sheet
     @State private var selectedRouteForConfig: SavedRoute? = nil
+    @State private var routeToEdit: SavedRoute? = nil
 
     // 路線分享 Sheet
     @State private var routeToShare: SavedRoute? = nil
@@ -53,10 +54,12 @@ public struct ControlDrawerView: View {
 
     var onOpenShare: () -> Void
     var onOpenSettings: () -> Void
+    var onOpenRadar: (() -> Void)?
 
-    public init(onOpenShare: @escaping () -> Void, onOpenSettings: @escaping () -> Void) {
+    public init(onOpenShare: @escaping () -> Void, onOpenSettings: @escaping () -> Void, onOpenRadar: (() -> Void)? = nil) {
         self.onOpenShare = onOpenShare
         self.onOpenSettings = onOpenSettings
+        self.onOpenRadar = onOpenRadar
     }
 
     public var body: some View {
@@ -128,6 +131,9 @@ public struct ControlDrawerView: View {
                 executeSelectedRoute(route: route, mode: mode, loopMode: loopMode, loops: loops, flowerSettings: flowerSettings, fruitWalkDist: fruitWalkDist)
             }
         }
+        .sheet(item: $routeToEdit) { route in
+            RouteEditorView(route: route)
+        }
         .sheet(isPresented: $isRouteSharePresented) {
             if let r = routeToShare {
                 SingleRouteShareSheet(route: r)
@@ -164,6 +170,21 @@ public struct ControlDrawerView: View {
                 }
 
                 Spacer()
+
+                // 蘑菇雷達按鈕
+                if let openRadar = onOpenRadar {
+                    Button(action: {
+                        hideKeyboard()
+                        openRadar()
+                    }) {
+                        Image(systemName: "circle.grid.hex.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(Color(red: 0.95, green: 0.5, blue: 0.0))
+                            .padding(6)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .clipShape(Circle())
+                    }
+                }
 
                 // 設定按鈕
                 Button(action: {
@@ -644,6 +665,17 @@ public struct ControlDrawerView: View {
                                     }
                                 }
 
+                                // 編輯路線點位
+                                Button(action: {
+                                    hideKeyboard()
+                                    self.routeToEdit = route
+                                }) {
+                                    Image(systemName: "list.bullet.indent")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.blue)
+                                        .frame(width: 24, height: 24)
+                                }
+
                                 // 編輯標籤
                                 Button(action: {
                                     hideKeyboard()
@@ -797,6 +829,17 @@ public struct ControlDrawerView: View {
                                             .background(Color.purple.opacity(0.1))
                                             .cornerRadius(6)
                                     }
+                                }
+
+                                // 編輯路線點位
+                                Button(action: {
+                                    hideKeyboard()
+                                    self.routeToEdit = route
+                                }) {
+                                    Image(systemName: "list.bullet.indent")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.blue)
+                                        .frame(width: 24, height: 24)
                                 }
 
                                 // 編輯標籤

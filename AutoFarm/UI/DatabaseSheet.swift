@@ -43,6 +43,7 @@ public struct DatabaseSheet: View {
     @State private var routeForResumeChoice: SavedRoute? = nil
 
     @State private var selectedRouteForConfig: SavedRoute? = nil
+    @State private var routeToEdit: SavedRoute? = nil
 
     public init() {}
 
@@ -134,6 +135,9 @@ public struct DatabaseSheet: View {
                 RouteModeConfigSheet(route: route) { mode, loopMode, loops, flowerSettings, fruitWalkDist in
                     executeSelectedRoute(route: route, mode: mode, loopMode: loopMode, loops: loops, flowerSettings: flowerSettings, fruitWalkDist: fruitWalkDist)
                 }
+            }
+            .sheet(item: $routeToEdit) { route in
+                RouteEditorView(route: route)
             }
             .actionSheet(isPresented: $isResumeRouteChoicePresented) {
                 resumeRouteActionSheet
@@ -422,6 +426,17 @@ public struct DatabaseSheet: View {
                                         .foregroundColor(.purple)
                                 }
                             }
+
+                            // 編輯路線點位按鈕
+                            Button(action: {
+                                routeToEdit = route
+                            }) {
+                                Image(systemName: "list.bullet.indent")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.blue)
+                                    .padding(4)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
 
                             Button(action: {
                                 openEditTagAndNote(id: route.id, isRoute: true, currentTitle: route.name, currentTag: route.tag, currentNote: route.note)

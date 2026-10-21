@@ -17,6 +17,11 @@ public enum EngineMath {
         return earthRadiusMeters * c
     }
 
+    /// haversineDistance 別名，完全等同於 getDistance
+    public static func haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
+        return getDistance(lat1: lat1, lon1: lon1, lat2: lat2, lon2: lon2)
+    }
+
     /// 計算起始點指向終點之方位角 (度數 0 ~ 360)
     public static func getBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
         let rLat1 = lat1 * .pi / 180.0

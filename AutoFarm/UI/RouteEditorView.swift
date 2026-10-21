@@ -169,7 +169,7 @@ public struct RouteEditorView: View {
 
                                         if idx > 0 {
                                             let prev = nodes[idx - 1]
-                                            let dist = EngineMath.haversineDistance(lat1: prev.lat, lon1: prev.lng, lat2: node.lat, lon2: node.lng)
+                                            let dist = EngineMath.getDistance(lat1: prev.lat, lon1: prev.lng, lat2: node.lat, lon2: node.lng)
                                             Text("距前點: \(Int(dist))m")
                                                 .font(.system(size: 11))
                                                 .foregroundColor(.secondary)

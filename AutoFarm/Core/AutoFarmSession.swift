@@ -838,9 +838,6 @@ public final class AutoFarmSession: ObservableObject {
             }
         }
     }
-            }
-        }
-    }
 
     private func showToast(_ msg: String) {
         DispatchQueue.main.async {

@@ -456,8 +456,7 @@ public final class FlowerStationManager: ObservableObject {
                 .replacingOccurrences(of: "(", with: "")
                 .replacingOccurrences(of: ")", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let parts = cleaned.components(separatedBy: CharacterSet(charactersIn: ",; 	
-")).filter { !$0.isEmpty }
+            let parts = cleaned.components(separatedBy: CharacterSet(charactersIn: ",; \t\r\n")).filter { !$0.isEmpty }
             if parts.count >= 2 {
                 if let p0 = Double(parts[0]), let p1 = Double(parts[1]), (-90.0...90.0).contains(p0) && (-180.0...180.0).contains(p1) {
                     lat = p0

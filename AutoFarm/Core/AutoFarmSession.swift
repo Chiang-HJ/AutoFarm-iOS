@@ -558,6 +558,10 @@ public final class AutoFarmSession: ObservableObject {
     }
 
     /// 手動瞬移至指定座標 (方案 A: 支援掛起插隊，自動記錄中斷點與瞬移歷史，按繼續自動返回接續)
+    public func teleport(to coord: CLLocationCoordinate2D, label: String = "") {
+        teleport(to: coord.latitude, lng: coord.longitude, label: label)
+    }
+
     public func teleport(to lat: Double, lng: Double, label: String = "") {
         // 若當前有排程路線且尚未記錄過插隊中斷點
         if !routePoints.isEmpty {
@@ -856,7 +860,7 @@ public final class AutoFarmSession: ObservableObject {
         }
     }
 
-    private func showToast(_ msg: String) {
+    public func showToast(_ msg: String) {
         DispatchQueue.main.async {
             self.toastMessage = msg
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {

@@ -51,6 +51,8 @@ public struct ControlDrawerView: View {
 
     // 獨立速度文字輸入狀態
     @State private var speedInputText: String = "18"
+    @State private var showJumpPointAlert: Bool = false
+    @State private var jumpPointInputText: String = ""
 
     var onOpenShare: () -> Void
     var onOpenSettings: () -> Void
@@ -333,9 +335,28 @@ public struct ControlDrawerView: View {
                     let totalDisp = session.displayWaypoints.count
                     let labelType = (session.executionMode == 1) ? "花苞" : "航點"
 
-                    Text("\(labelType) \(currentDisp)/\(totalDisp) | 循環第 \(session.routeCurrentLoop + 1) 圈 | 預計 \(session.etaString)")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        Text("\(labelType) \(currentDisp)/\(totalDisp) | 循環第 \(session.routeCurrentLoop + 1) 圈 | 預計 \(session.etaString)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        Button(action: {
+                            hideKeyboard()
+                            jumpPointInputText = "\(currentDisp)"
+                            showJumpPointAlert = true
+                        }) {
+                            HStack(spacing: 2) {
+                                Image(systemName: "number")
+                                Text("跳點")
+                            }
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.15))
+                            .foregroundColor(.blue)
+                            .cornerRadius(4)
+                        }
+                    }
                 }
 
                 Spacer()
@@ -425,6 +446,25 @@ public struct ControlDrawerView: View {
                     .padding(.vertical, 7)
                     .background(Color(UIColor.tertiarySystemBackground))
                     .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+
+                // 輸入跳點
+                Button(action: {
+                    hideKeyboard()
+                    jumpPointInputText = "\(session.currentDisplayIndex + 1)"
+                    showJumpPointAlert = true
+                }) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "number.circle.fill")
+                            .font(.system(size: 14))
+                        Text("輸入跳點")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.blue.opacity(0.15))
+                    .foregroundColor(.blue)
                     .cornerRadius(8)
                 }
 
@@ -549,6 +589,21 @@ public struct ControlDrawerView: View {
         .background(Color(UIColor.secondarySystemBackground).opacity(0.85))
         .cornerRadius(14)
         .padding(.horizontal, 16)
+        .alert("輸入點位數字跳點", isPresented: $showJumpPointAlert) {
+            TextField("點位編號 (1 ~ \(session.displayWaypoints.count))", text: $jumpPointInputText)
+                .keyboardType(.numberPad)
+            Button("確定跳轉") {
+                if let num = Int(jumpPointInputText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                   num >= 1, num <= session.displayWaypoints.count {
+                    session.jumpToWaypoint(index: num - 1)
+                } else {
+                    session.showToast("請輸入 1 ~ \(session.displayWaypoints.count) 之間的點位編號")
+                }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("有效範圍：1 ~ \(session.displayWaypoints.count) 點")
+        }
     }
 
     // MARK: - 座標庫視圖 (支援置頂、標籤、點擊直接瞬移方案 A)

@@ -354,6 +354,11 @@ public final class AutoFarmSession: ObservableObject {
         showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
     }
 
+    /// 直接輸入點位數字跳點 (1-indexed)
+    public func jumpToPoint(displayIndex: Int) {
+        jumpToWaypoint(index: displayIndex - 1)
+    }
+
     /// 跳轉至指定基準航點開始運行 (點擊數字球時觸發)
     public func jumpToWaypoint(index: Int) {
         let validIdx = min(max(index, 0), max(displayWaypoints.count - 1, 0))

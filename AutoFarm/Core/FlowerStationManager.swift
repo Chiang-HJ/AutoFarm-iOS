@@ -413,19 +413,21 @@ public final class FlowerStationManager: ObservableObject {
                 }
 
                 var parsed: [FlowerStationPoint] = []
-                if let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                    for (idx, raw) in list.enumerated() {
-                        let pt = self.parsePointItem(index: idx, raw: raw)
-                        parsed.append(pt)
-                    }
-                } else if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
-                    for (k, raw) in dict {
-                        if let idx = Int(k) {
-                            let pt = self.parsePointItem(index: idx, raw: raw)
-                            parsed.append(pt)
+                if let root = try? JSONSerialization.jsonObject(with: data) {
+                    if let list = root as? [Any] {
+                        for (idx, item) in list.enumerated() {
+                            if let dict = item as? [String: Any] {
+                                parsed.append(self.parsePointItem(index: idx, raw: dict))
+                            }
                         }
+                    } else if let dict = root as? [String: Any] {
+                        for (k, val) in dict {
+                            if let idx = Int(k), let pointDict = val as? [String: Any] {
+                                parsed.append(self.parsePointItem(index: idx, raw: pointDict))
+                            }
+                        }
+                        parsed.sort { $0.index < $1.index }
                     }
-                    parsed.sort { $0.index < $1.index }
                 }
 
                 let mature = parsed.filter { $0.isFruitMature }
@@ -447,12 +449,20 @@ public final class FlowerStationManager: ObservableObject {
         var lng: Double? = nil
 
         if !coordsStr.isEmpty {
-            let parts = coordsStr.replacingOccurrences(of: "[", with: "")
+            let cleaned = coordsStr
+                .replacingOccurrences(of: "VIRTUAL:", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "[", with: "")
                 .replacingOccurrences(of: "]", with: "")
-                .components(separatedBy: ",")
+                .replacingOccurrences(of: "(", with: "")
+                .replacingOccurrences(of: ")", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = cleaned.components(separatedBy: CharacterSet(charactersIn: ",; 	
+")).filter { !$0.isEmpty }
             if parts.count >= 2 {
-                lat = Double(parts[0].trimmingCharacters(in: .whitespaces))
-                lng = Double(parts[1].trimmingCharacters(in: .whitespaces))
+                if let p0 = Double(parts[0]), let p1 = Double(parts[1]), (-90.0...90.0).contains(p0) && (-180.0...180.0).contains(p1) {
+                    lat = p0
+                    lng = p1
+                }
             }
         }
 
@@ -686,22 +696,67 @@ public final class FlowerStationManager: ObservableObject {
         }
     }
 
+    // MARK: - 路線花田選擇記憶
+    private let kRoutePrefPrefix = "station_flower_pref_"
+
+    public func saveRouteFlowerPreference(routeName: String, flowerIndex: Int) {
+        let clean = cleanNameTokens(routeName)
+        guard !clean.isEmpty else { return }
+        userDefaults.set(flowerIndex, forKey: kRoutePrefPrefix + clean)
+    }
+
+    public func getRouteFlowerPreference(routeName: String) -> Int? {
+        let clean = cleanNameTokens(routeName)
+        guard !clean.isEmpty else { return nil }
+        guard userDefaults.object(forKey: kRoutePrefPrefix + clean) != nil else { return nil }
+        let idx = userDefaults.integer(forKey: kRoutePrefPrefix + clean)
+        return idx >= 0 ? idx : nil
+    }
+
     // MARK: - 路線與花田智慧匹配
     public func findMatchingFlower(for routeName: String, firstPointCoord: CLLocationCoordinate2D? = nil) -> FlowerStationPoint? {
+        // 0. 記憶優先：若先前手動為此路線指定過花田，直接還原
+        if let prefIndex = getRouteFlowerPreference(routeName: routeName),
+           let remembered = allPoints.first(where: { $0.index == prefIndex }) {
+            return remembered
+        }
+
         let cleanRouteName = cleanNameTokens(routeName)
 
-        // 1. 名稱相似度比對 (例如 "印30 種" -> 乾淨名 "印30")
-        for pt in allPoints {
-            let cleanPt = cleanNameTokens(pt.name)
-            if !cleanPt.isEmpty && (cleanRouteName.contains(cleanPt) || cleanPt.contains(cleanRouteName)) {
-                return pt
+        // 1. 第一階：乾淨名稱完全一致
+        if !cleanRouteName.isEmpty {
+            for pt in allPoints {
+                let cleanPt = cleanNameTokens(pt.name)
+                if !cleanPt.isEmpty && cleanRouteName == cleanPt {
+                    return pt
+                }
             }
         }
 
-        // 2. 空間距離比對 (200 公尺內最靠近的花苞)
+        // 2. 第二階：乾淨名稱互相包含 (字數 >= 2)
+        if cleanRouteName.count >= 2 {
+            for pt in allPoints {
+                let cleanPt = cleanNameTokens(pt.name)
+                if cleanPt.count >= 2 && (cleanRouteName.contains(cleanPt) || cleanPt.contains(cleanRouteName)) {
+                    return pt
+                }
+            }
+        }
+
+        // 3. 第三階：原始名稱包含比對
+        let rawTrimmed = routeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawTrimmed.count >= 2 {
+            for pt in allPoints {
+                if pt.name.count >= 2 && (rawTrimmed.contains(pt.name) || pt.name.contains(rawTrimmed)) {
+                    return pt
+                }
+            }
+        }
+
+        // 4. 第四階：空間距離比對 (擴大至 1500 公尺內最靠近的花苞)
         if let target = firstPointCoord {
             var closest: FlowerStationPoint? = nil
-            var minDist = 250.0 // 公尺門檻
+            var minDist = 1500.0 // 擴大門檻至 1500 公尺
             for pt in allPoints {
                 if let ptCoord = pt.coordinate {
                     let d = EngineMath.getDistance(lat1: target.latitude, lon1: target.longitude, lat2: ptCoord.latitude, lon2: ptCoord.longitude)
@@ -724,21 +779,27 @@ public final class FlowerStationManager: ObservableObject {
 
         for r in allRoutes {
             let cleanR = cleanNameTokens(r.name)
-            let isNameMatch = cleanR.contains(cleanPt) || cleanPt.contains(cleanR) || r.name.contains(flower.name)
+            let isNameMatch = (!cleanPt.isEmpty && cleanR.contains(cleanPt)) ||
+                              (!cleanR.isEmpty && cleanPt.contains(cleanR)) ||
+                              r.name.contains(flower.name) || flower.name.contains(r.name)
             
-            // 空間近距離比對
+            // 空間近距離比對 (門檻 1500 公尺)
             var isCoordMatch = false
+            var dist = Double.infinity
             if let fCoord = flower.coordinate, let first = r.nodes.first {
-                let dist = EngineMath.getDistance(lat1: fCoord.latitude, lon1: fCoord.longitude, lat2: first.lat, lon2: first.lng)
-                if dist < 250.0 { isCoordMatch = true }
+                dist = EngineMath.getDistance(lat1: fCoord.latitude, lon1: fCoord.longitude, lat2: first.lat, lon2: first.lng)
+                if dist < 1500.0 { isCoordMatch = true }
             }
 
             if isNameMatch || isCoordMatch {
                 let isHarvest = r.name.contains("收") || r.name.contains("果") || r.name.contains("80") || r.name.contains("80m")
                 var score = 0
                 if isHarvest { score += 50 }
-                if isNameMatch { score += 30 }
-                if isCoordMatch { score += 20 }
+                if cleanR == cleanPt { score += 40 }
+                else if isNameMatch { score += 25 }
+                if isCoordMatch {
+                    score += dist < 300.0 ? 30 : (dist < 800.0 ? 20 : 10)
+                }
                 matches.append(StationRouteMatch(route: r, isHarvestRecommended: isHarvest, matchScore: score))
             }
         }
@@ -754,12 +815,18 @@ public final class FlowerStationManager: ObservableObject {
         return matches
     }
 
-    private func cleanNameTokens(_ str: String) -> String {
+    public func cleanNameTokens(_ str: String) -> String {
         var s = str.trimmingCharacters(in: .whitespacesAndNewlines)
-        let removes = ["[", "]", "(", ")", "【", "】", "（", "）", " ", "-", "_", "種", "收", "花", "果", "80m", "80", "繞圈", "巡航"]
+        let removes = [
+            "路線:", "路徑:", "執行路線:", "路線：", "路徑：", "執行路線：",
+            "[", "]", "【", "】", "(", ")", "（", "）", " ", "-", "_",
+            "種花", "採果", "大花", "模式", "80米", "80m", "80", "28m", "24m",
+            "巡航", "路線", "路徑", "種", "收", "花", "果", "循環", "雙圈", "單圈",
+            "逆時針", "順時針", "定點", "自動"
+        ]
         for r in removes {
             s = s.replacingOccurrences(of: r, with: "")
         }
-        return s.lowercased()
+        return s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

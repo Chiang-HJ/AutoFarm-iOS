@@ -695,31 +695,8 @@ public final class FlowerStationManager: ObservableObject {
         }
     }
 
-    // MARK: - 路線花田選擇記憶
-    private let kRoutePrefPrefix = "station_flower_pref_"
-
-    public func saveRouteFlowerPreference(routeName: String, flowerIndex: Int) {
-        let clean = cleanNameTokens(routeName)
-        guard !clean.isEmpty else { return }
-        userDefaults.set(flowerIndex, forKey: kRoutePrefPrefix + clean)
-    }
-
-    public func getRouteFlowerPreference(routeName: String) -> Int? {
-        let clean = cleanNameTokens(routeName)
-        guard !clean.isEmpty else { return nil }
-        guard userDefaults.object(forKey: kRoutePrefPrefix + clean) != nil else { return nil }
-        let idx = userDefaults.integer(forKey: kRoutePrefPrefix + clean)
-        return idx >= 0 ? idx : nil
-    }
-
     // MARK: - 路線與花田智慧匹配
     public func findMatchingFlower(for routeName: String, firstPointCoord: CLLocationCoordinate2D? = nil) -> FlowerStationPoint? {
-        // 0. 記憶優先：若先前手動為此路線指定過花田，直接還原
-        if let prefIndex = getRouteFlowerPreference(routeName: routeName),
-           let remembered = allPoints.first(where: { $0.index == prefIndex }) {
-            return remembered
-        }
-
         let cleanRouteName = cleanNameTokens(routeName)
 
         // 1. 第一階：乾淨名稱完全一致
@@ -752,10 +729,10 @@ public final class FlowerStationManager: ObservableObject {
             }
         }
 
-        // 4. 第四階：空間距離比對 (擴大至 1500 公尺內最靠近的花苞)
+        // 4. 第四階：空間距離比對 (250 公尺內最近花苞)
         if let target = firstPointCoord {
             var closest: FlowerStationPoint? = nil
-            var minDist = 1500.0 // 擴大門檻至 1500 公尺
+            var minDist = 250.0 // 門檻 250 公尺
             for pt in allPoints {
                 if let ptCoord = pt.coordinate {
                     let d = EngineMath.getDistance(lat1: target.latitude, lon1: target.longitude, lat2: ptCoord.latitude, lon2: ptCoord.longitude)

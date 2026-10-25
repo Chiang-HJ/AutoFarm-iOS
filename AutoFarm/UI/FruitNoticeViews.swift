@@ -146,36 +146,12 @@ private struct FruitFlowerCard: View {
             let matches = station.findMatchingRoutes(for: flower)
 
             if matches.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("⚠️ 本地資料庫暫無此花田之專屬路線檔案")
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("⚠️ 本地資料庫暫無匹配路線")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
 
                     if let coord = flower.coordinate {
-                        Button(action: {
-                            let singleNode = [RouteNode(lat: coord.latitude, lng: coord.longitude)]
-                            session.startFruitRoute(
-                                name: "跳收 \(flower.name)",
-                                basePoints: singleNode,
-                                loops: 0,
-                                walkDistance: 80.0
-                            )
-                            session.showToast("🟢 已為【\(flower.name)】自動生成 80m 跳收果實路線並出發！")
-                            onActionFinished()
-                        }) {
-                            HStack {
-                                Image(systemName: "bolt.circle.fill")
-                                    .foregroundColor(.orange)
-                                Text("✨ 以此花田為中心自動生成 80m 跳收路線並出發")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundColor(.orange)
-                                Spacer()
-                            }
-                            .padding(10)
-                            .background(Color.orange.opacity(0.12))
-                            .cornerRadius(8)
-                        }
-
                         Button(action: {
                             session.teleport(to: coord)
                             session.showToast("已瞬移至【\(flower.name)】座標")
@@ -183,8 +159,8 @@ private struct FruitFlowerCard: View {
                         }) {
                             HStack {
                                 Image(systemName: "location.fill")
-                                Text("📍 單點瞬移至該花苞座標 (\(String(format: "%.4f", coord.latitude)), \(String(format: "%.4f", coord.longitude)))")
-                                    .font(.system(size: 12, weight: .medium))
+                                Text("單點瞬移至該花苞座標 (\(String(format: "%.4f", coord.latitude)), \(String(format: "%.4f", coord.longitude)))")
+                                    .font(.system(size: 13, weight: .medium))
                             }
                             .foregroundColor(.blue)
                         }

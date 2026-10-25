@@ -137,11 +137,6 @@ public struct PreFlightPlantingSheet: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        .onChange(of: selectedPointIndex) { idx in
-                            if idx >= 0 {
-                                station.saveRouteFlowerPreference(routeName: route.name, flowerIndex: idx)
-                            }
-                        }
 
                         if selectedPointIndex >= 0, let target = station.allPoints.first(where: { $0.index == selectedPointIndex }) {
                             HStack {
@@ -288,12 +283,9 @@ public struct PreFlightPlantingSheet: View {
             self.planterNickname = "花友"
         }
 
-        // 自動比對目標花苞 (優先還原路線記憶)
+        // 自動比對目標花苞
         let firstCoord: CLLocationCoordinate2D? = route.nodes.first.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
-        if let prefIndex = station.getRouteFlowerPreference(routeName: route.name),
-           station.allPoints.contains(where: { $0.index == prefIndex }) {
-            self.selectedPointIndex = prefIndex
-        } else if let match = station.findMatchingFlower(for: route.name, firstPointCoord: firstCoord) {
+        if let match = station.findMatchingFlower(for: route.name, firstPointCoord: firstCoord) {
             self.selectedPointIndex = match.index
         } else if let firstPt = station.allPoints.first {
             self.selectedPointIndex = firstPt.index

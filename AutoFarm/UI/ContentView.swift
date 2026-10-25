@@ -6,12 +6,14 @@ public struct ContentView: View {
     @StateObject private var session = AutoFarmSession.shared
     @ObservedObject private var db = SavedDatabaseStore.shared
     @ObservedObject private var clipboard = ClipboardDetector.shared
+    @ObservedObject private var station = FlowerStationManager.shared
 
     @State private var searchInput: String = ""
     @State private var isSharePresented: Bool = false
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
     @State private var isRadarPresented: Bool = false
+    @State private var isFruitNoticeSheetPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -72,6 +74,9 @@ public struct ContentView: View {
                 topActionBar
                     .padding(.horizontal, 12)
                     .padding(.top, 44) // 避開 Dynamic Island / 狀態列
+
+                // 觀測站果實成熟公告橫幅 (點擊彈出聚合路線決策)
+                FruitNoticeBannerView(isSheetPresented: $isFruitNoticeSheetPresented)
 
                 // 剪貼簿座標即時感測懸浮橫幅
                 if let item = clipboard.activeItem {
@@ -204,6 +209,25 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isRadarPresented) {
             MushroomRadarView()
+        }
+        .sheet(isPresented: $isFruitNoticeSheetPresented) {
+            FruitNoticeSheet()
+        }
+        .alert(isPresented: $station.shouldPromptSpotRelease) {
+            let cardName = station.spotToRelease?.pointName ?? "此花田"
+            return Alert(
+                title: Text("是否清空觀測站卡位以釋放花田？"),
+                message: Text("您已停止巡航。觀測站【\(cardName)】目前處於卡位保留狀態，是否要清空卡位以釋放給其他群友？"),
+                primaryButton: .destructive(Text("釋放花田 (清空卡位)")) {
+                    if let card = station.spotToRelease {
+                        station.releaseSpot(pointIndex: card.pointIndex)
+                    }
+                    station.spotToRelease = nil
+                },
+                secondaryButton: .cancel(Text("保留卡位")) {
+                    station.spotToRelease = nil
+                }
+            )
         }
     }
 

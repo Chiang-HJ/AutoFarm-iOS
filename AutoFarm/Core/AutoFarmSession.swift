@@ -515,6 +515,14 @@ public final class AutoFarmSession: ObservableObject {
 
     /// 停止路線 (僅停止自動行進，不解除虛擬定位，角色維持在當前座標)
     public func stopRoute() {
+        // 檢查是否處於未開花卡位狀態，主動詢問釋放花田
+        if let card = FlowerStationManager.shared.activeCard, !card.isCountdownStarted {
+            DispatchQueue.main.async {
+                FlowerStationManager.shared.spotToRelease = card
+                FlowerStationManager.shared.shouldPromptSpotRelease = true
+            }
+        }
+
         self.routePoints = []
         self.originalBasePoints = []
         self.currentRouteIndex = 0
@@ -651,6 +659,9 @@ public final class AutoFarmSession: ObservableObject {
                 shouldPause = true
             } else {
                 let target = routePoints[nextIndex]
+                if target.lapIndex == 2 {
+                    FlowerStationManager.shared.triggerLoop2Countdown()
+                }
 
                 if target.isTeleport {
                     nextLat = target.lat
@@ -696,6 +707,9 @@ public final class AutoFarmSession: ObservableObject {
                                 if shouldLoop {
                                     nextLoop += 1
                                     nextIndex = 0
+                                    if nextLoop == 1 {
+                                        FlowerStationManager.shared.triggerLoop2Countdown()
+                                    }
                                 } else {
                                     shouldPause = true
                                 }
@@ -746,6 +760,9 @@ public final class AutoFarmSession: ObservableObject {
             let shouldLoop = (self.routeLoopTarget == 0) || (self.routeCurrentLoop < self.routeLoopTarget - 1)
             if shouldLoop {
                 self.routeCurrentLoop += 1
+                if self.routeCurrentLoop == 1 {
+                    FlowerStationManager.shared.triggerLoop2Countdown()
+                }
                 if self.executionMode == 2 { // 果實循環
                     if let first = self.routePoints.first {
                         let cdSec = EngineMath.calculateCooldownSeconds(distanceMeters: EngineMath.getDistance(lat1: currentLat, lon1: currentLng, lat2: first.lat, lon2: first.lng))

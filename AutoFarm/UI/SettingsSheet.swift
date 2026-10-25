@@ -5,6 +5,7 @@ public struct SettingsSheet: View {
     @ObservedObject var pairService = PairOnDeviceService.shared
     @ObservedObject var pairingStore = PairingStore.shared
     @ObservedObject var certManager = CertificateCountdownManager.shared
+    @ObservedObject var station = FlowerStationManager.shared
     @Environment(\.dismiss) var dismiss
 
     @State private var isTesting: Bool = false
@@ -12,6 +13,12 @@ public struct SettingsSheet: View {
     @State private var isSuccess: Bool = false
     @State private var isShowingFilePicker: Bool = false
     @State private var importStatusMessage: String? = nil
+
+    // 花田觀測站設定
+    @State private var stationEmailInput: String = ""
+    @State private var stationPassInput: String = ""
+    @State private var isStationLoggingIn: Bool = false
+    @State private var stationLoginMsg: String? = nil
 
     private let dateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -272,6 +279,91 @@ public struct SettingsSheet: View {
                     Text("1. iPhone 必須開啟「開發者模式」（設定 → 隱私權與安全性 → 最下方開發者模式）。\n2. 連接 LocalDevVPN (10.7.1.1) 本機迴圈。\n3. 通道握手完成後，即可隨時在單機獨立修改系統定位與巡航。")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+
+                Section(header: Text("花田觀測站 (cc123pikmin.vercel.app)")) {
+                    if station.isStationLoggedIn {
+                        HStack {
+                            Text("連動狀態")
+                            Spacer()
+                            Text("🟢 已綁定連線")
+                                .font(.subheadline)
+                                .foregroundColor(.green)
+                        }
+
+                        HStack {
+                            Text("觀測站稱呼")
+                            Spacer()
+                            Text(station.stationDisplayName.isEmpty ? station.stationEmail : station.stationDisplayName)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                        }
+
+                        HStack {
+                            Text("綁定帳號")
+                            Spacer()
+                            Text(station.stationEmail)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Button(action: {
+                            station.logoutStation()
+                        }) {
+                            Text("解除觀測站綁定")
+                                .foregroundColor(.orange)
+                                .font(.subheadline)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("綁定觀測站後，繞圈種花可一鍵前置卡位與第二圈自動倒數。")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+
+                            TextField("觀測站登入 Email", text: $stationEmailInput)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .autocapitalization(.none)
+                                .keyboardType(.emailAddress)
+
+                            SecureField("觀測站密碼", text: $stationPassInput)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                            if let msg = stationLoginMsg {
+                                Text(msg)
+                                    .font(.caption2)
+                                    .foregroundColor(.red)
+                            }
+
+                            Button(action: {
+                                guard !stationEmailInput.isEmpty, !stationPassInput.isEmpty else {
+                                    stationLoginMsg = "請輸入 Email 與密碼"
+                                    return
+                                }
+                                isStationLoggingIn = true
+                                stationLoginMsg = nil
+                                station.loginToStation(email: stationEmailInput, pass: stationPassInput) { success, res in
+                                    self.isStationLoggingIn = false
+                                    if !success {
+                                        self.stationLoginMsg = res
+                                    }
+                                }
+                            }) {
+                                HStack {
+                                    if isStationLoggingIn { ProgressView() }
+                                    Text(isStationLoggingIn ? "連線中..." : "登入並綁定花田觀測站")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                            .disabled(isStationLoggingIn)
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
 
                 Section(header: Text("帳號管理")) {

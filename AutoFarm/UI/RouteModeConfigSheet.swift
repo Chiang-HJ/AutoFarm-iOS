@@ -30,6 +30,10 @@ public struct RouteModeConfigSheet: View {
     @State private var fruitWalkDistance: Double = 80.0
     @State private var fruitLoops: Int = 0
 
+    // 花田觀測站前置設定
+    @State private var isPreFlightPlantingPresented: Bool = false
+    @State private var pendingFlowerConfig: MultiFlowerSettings? = nil
+
     public init(route: SavedRoute, onStart: @escaping (Int, LoopMode, Int, MultiFlowerSettings, Double) -> Void) {
         self.route = route
         self.onStart = onStart
@@ -73,6 +77,14 @@ public struct RouteModeConfigSheet: View {
             .navigationTitle("模式參數設定")
             .navigationBarItems(leading: Button("取消") { dismiss() })
             .onAppear(perform: loadSavedPreferences)
+            .sheet(isPresented: $isPreFlightPlantingPresented) {
+                if let flowerCfg = pendingFlowerConfig {
+                    PreFlightPlantingSheet(route: route, flowerSettings: flowerCfg) {
+                        onStart(1, linearLoopMode, 0, flowerCfg, fruitWalkDistance)
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 
@@ -236,6 +248,13 @@ public struct RouteModeConfigSheet: View {
             circle1: FlowerCircleParam(radius: circle1Radius, loops: circle1Loops, waitBeforeSec: circle1WaitBefore, waitAfterSec: circle1WaitAfter),
             circle2: FlowerCircleParam(radius: circle2Radius, loops: circle2Loops, waitBeforeSec: circle2WaitBefore, waitAfterSec: circle2WaitAfter)
         )
+
+        if selectedMode == 1 {
+            // 繞圈種花：開啟花田觀測站連動與卡位前置設定
+            self.pendingFlowerConfig = flowerConfig
+            self.isPreFlightPlantingPresented = true
+            return
+        }
 
         let targetLoops = (selectedMode == 0) ? linearLoops : (selectedMode == 1 ? 0 : fruitLoops)
         onStart(selectedMode, linearLoopMode, targetLoops, flowerConfig, fruitWalkDistance)

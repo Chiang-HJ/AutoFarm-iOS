@@ -12,7 +12,6 @@ public struct ContentView: View {
     @State private var isSharePresented: Bool = false
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
-    @State private var isRadarPresented: Bool = false
     @State private var isFruitNoticeSheetPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
@@ -149,8 +148,7 @@ public struct ContentView: View {
                 // 底部控制抽屜
                 ControlDrawerView(
                     onOpenShare: { isSharePresented = true },
-                    onOpenSettings: { isSettingsPresented = true },
-                    onOpenRadar: { isRadarPresented = true }
+                    onOpenSettings: { isSettingsPresented = true }
                 )
             }
             .edgesIgnoringSafeArea(.bottom)
@@ -206,9 +204,6 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isSettingsPresented) {
             SettingsSheet()
-        }
-        .sheet(isPresented: $isRadarPresented) {
-            MushroomRadarView()
         }
         .sheet(isPresented: $isFruitNoticeSheetPresented) {
             FruitNoticeSheet()
@@ -432,19 +427,6 @@ public struct ContentView: View {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.blue)
-                    .frame(width: 34, height: 34)
-                    .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
-                    .cornerRadius(8)
-            }
-
-            // 蘑菇雷達
-            Button(action: {
-                hideKeyboard()
-                isRadarPresented = true
-            }) {
-                Image(systemName: "circle.grid.hex.fill")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(Color(red: 0.95, green: 0.5, blue: 0.0))
                     .frame(width: 34, height: 34)
                     .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
                     .cornerRadius(8)

@@ -740,11 +740,11 @@ public final class AutoFarmSession: ObservableObject {
 
         // 所有 @Published 狀態更新切回主執行緒，杜絕背景線程修改導致 MapKit 閃退
         DispatchQueue.main.async {
-            self.currentLat = nextLat
-            self.currentLng = nextLng
-            self.cooldownRemainingSec = nextCooldown
-            self.currentRouteIndex = nextIndex
-            self.routeCurrentLoop = nextLoop
+            if self.currentLat != nextLat { self.currentLat = nextLat }
+            if self.currentLng != nextLng { self.currentLng = nextLng }
+            if self.cooldownRemainingSec != nextCooldown { self.cooldownRemainingSec = nextCooldown }
+            if self.currentRouteIndex != nextIndex { self.currentRouteIndex = nextIndex }
+            if self.routeCurrentLoop != nextLoop { self.routeCurrentLoop = nextLoop }
             if self.isRoutePaused != shouldPause {
                 self.isRoutePaused = shouldPause
             }
@@ -822,11 +822,15 @@ public final class AutoFarmSession: ObservableObject {
                 switch result {
                 case .success:
                     self.pushFailureCount = 0
-                    self.isSimulatingLocation = true
+                    if !self.isSimulatingLocation {
+                        self.isSimulatingLocation = true
+                    }
                 case .failure(let err):
                     self.pushFailureCount += 1
                     if self.pushFailureCount == 15 {
-                        self.isSimulatingLocation = false
+                        if self.isSimulatingLocation {
+                            self.isSimulatingLocation = false
+                        }
                         self.showToast("通道暫時斷開，正在重新連線...")
                         print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
                     }

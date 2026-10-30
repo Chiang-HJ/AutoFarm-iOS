@@ -56,12 +56,10 @@ public struct ControlDrawerView: View {
 
     var onOpenShare: () -> Void
     var onOpenSettings: () -> Void
-    var onOpenRadar: (() -> Void)?
 
-    public init(onOpenShare: @escaping () -> Void, onOpenSettings: @escaping () -> Void, onOpenRadar: (() -> Void)? = nil) {
+    public init(onOpenShare: @escaping () -> Void, onOpenSettings: @escaping () -> Void) {
         self.onOpenShare = onOpenShare
         self.onOpenSettings = onOpenSettings
-        self.onOpenRadar = onOpenRadar
     }
 
     public var body: some View {
@@ -172,21 +170,6 @@ public struct ControlDrawerView: View {
                 }
 
                 Spacer()
-
-                // 蘑菇雷達按鈕
-                if let openRadar = onOpenRadar {
-                    Button(action: {
-                        hideKeyboard()
-                        openRadar()
-                    }) {
-                        Image(systemName: "circle.grid.hex.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(Color(red: 0.95, green: 0.5, blue: 0.0))
-                            .padding(6)
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .clipShape(Circle())
-                    }
-                }
 
                 // 設定按鈕
                 Button(action: {

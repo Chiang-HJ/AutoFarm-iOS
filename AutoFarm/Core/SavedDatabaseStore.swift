@@ -204,8 +204,16 @@ public struct DatabaseBackupPayload: Codable {
 public final class SavedDatabaseStore: ObservableObject {
     public static let shared = SavedDatabaseStore()
 
-    @Published public var savedLocations: [SavedLocation] = []
-    @Published public var savedRoutes: [SavedRoute] = []
+    @Published public var savedLocations: [SavedLocation] = [] {
+        didSet {
+            _cachedSortedLocations = nil
+        }
+    }
+    @Published public var savedRoutes: [SavedRoute] = [] {
+        didSet {
+            _cachedSortedRoutes = nil
+        }
+    }
     @Published public var locationHistory: [LocationHistoryItem] = []
     public var teleportHistory: [LocationHistoryItem] { locationHistory }
 
@@ -215,12 +223,20 @@ public final class SavedDatabaseStore: ObservableObject {
     private let legacyHistoryKey = "com.autofarm.teleport_history"
     private let hasEverInitializedKey = "com.autofarm.has_initialized_defaults_v2"
 
+    private var _cachedSortedLocations: [SavedLocation]? = nil
     public var sortedLocations: [SavedLocation] {
-        filteredLocations(query: "", sortMode: .pinFirst)
+        if let cached = _cachedSortedLocations { return cached }
+        let sorted = filteredLocations(query: "", sortMode: .pinFirst)
+        _cachedSortedLocations = sorted
+        return sorted
     }
 
+    private var _cachedSortedRoutes: [SavedRoute]? = nil
     public var sortedRoutes: [SavedRoute] {
-        filteredRoutes(query: "", sortMode: .pinFirst)
+        if let cached = _cachedSortedRoutes { return cached }
+        let sorted = filteredRoutes(query: "", sortMode: .pinFirst)
+        _cachedSortedRoutes = sorted
+        return sorted
     }
 
     public func filteredLocations(query: String = "", sortMode: DatabaseSortMode = .pinFirst) -> [SavedLocation] {

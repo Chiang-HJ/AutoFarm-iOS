@@ -112,27 +112,55 @@ public struct MainMapView: UIViewRepresentable {
             }
         }
 
-        // 5. 更新連線軌跡與種花範圍圓圈
-        mapView.removeOverlays(mapView.overlays)
+        // 5. 更新連線軌跡折線 (僅在路線名稱或航點數量改變時重繪，絕不在走路時每 100ms 重複重建！)
+        let routeName = session.activeRouteName
+        let routePointsCount = session.routePoints.count
 
-        // 種花模式：在當前目標花苞周圍繪製 28m / 24m 圓形覆蓋層
-        if session.executionMode == 1 && displayCount > 0 && currentDisplayIdx < displayCount {
-            let currentFlower = waypoints[currentDisplayIdx]
-            let centerCoord = CLLocationCoordinate2D(latitude: currentFlower.lat, longitude: currentFlower.lng)
-            let circle28 = MKCircle(center: centerCoord, radius: 28.0)
-            let circle24 = MKCircle(center: centerCoord, radius: 24.0)
-            mapView.addOverlays([circle28, circle24])
+        if context.coordinator.cachedOverlayRouteName != routeName ||
+           context.coordinator.cachedOverlayPointsCount != routePointsCount {
+            
+            context.coordinator.cachedOverlayRouteName = routeName
+            context.coordinator.cachedOverlayPointsCount = routePointsCount
+
+            if let oldPolyline = context.coordinator.currentPolyline {
+                mapView.removeOverlay(oldPolyline)
+                context.coordinator.currentPolyline = nil
+            }
+
+            if routePointsCount > 1 {
+                let coords = session.routePoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+                let polyline = MKPolyline(coordinates: coords, count: coords.count)
+                mapView.addOverlay(polyline)
+                context.coordinator.currentPolyline = polyline
+            } else if displayCount > 1 {
+                let coords = waypoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+                let polyline = MKPolyline(coordinates: coords, count: coords.count)
+                mapView.addOverlay(polyline)
+                context.coordinator.currentPolyline = polyline
+            }
         }
 
-        // 航點連線 (多點連線)
-        if session.routePoints.count > 1 {
-            let coords = session.routePoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
-            let polyline = MKPolyline(coordinates: coords, count: coords.count)
-            mapView.addOverlay(polyline)
-        } else if displayCount > 1 {
-            let coords = waypoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
-            let polyline = MKPolyline(coordinates: coords, count: coords.count)
-            mapView.addOverlay(polyline)
+        // 6. 種花模式：僅在跨入不同花苞時更新 28m / 24m 範圍圓 (避免每 100ms 重建)
+        let isFlowerMode = (session.executionMode == 1)
+        let targetFlowerIdx = isFlowerMode ? currentDisplayIdx : -1
+
+        if context.coordinator.cachedOverlayFlowerIndex != targetFlowerIdx {
+            context.coordinator.cachedOverlayFlowerIndex = targetFlowerIdx
+
+            if !context.coordinator.currentCircles.isEmpty {
+                mapView.removeOverlays(context.coordinator.currentCircles)
+                context.coordinator.currentCircles.removeAll()
+            }
+
+            if isFlowerMode && displayCount > 0 && currentDisplayIdx < displayCount {
+                let currentFlower = waypoints[currentDisplayIdx]
+                let centerCoord = CLLocationCoordinate2D(latitude: currentFlower.lat, longitude: currentFlower.lng)
+                let circle28 = MKCircle(center: centerCoord, radius: 28.0)
+                let circle24 = MKCircle(center: centerCoord, radius: 24.0)
+                let newCircles = [circle28, circle24]
+                mapView.addOverlays(newCircles)
+                context.coordinator.currentCircles = newCircles
+            }
         }
     }
 
@@ -148,6 +176,13 @@ public struct MainMapView: UIViewRepresentable {
         var cachedRouteCount: Int = -1
         var cachedRouteName: String = ""
         var cachedCurrentIndex: Int = -1
+
+        // 快取覆蓋層物件，杜絕每 100ms 摧毀重建 GPU 緩衝區
+        var currentPolyline: MKPolyline?
+        var currentCircles: [MKCircle] = []
+        var cachedOverlayRouteName: String = ""
+        var cachedOverlayPointsCount: Int = -1
+        var cachedOverlayFlowerIndex: Int = -1
 
         init(_ parent: MainMapView) {
             self.parent = parent

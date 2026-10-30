@@ -294,11 +294,9 @@ public final class AutoFarmSession: ObservableObject {
 
             self.pushCurrentLocation()
             self.ensureEngineRunning()
-            self.showToast("已啟動同心圓種花 (\(nodes.count) 點)")
+            SavedDatabaseStore.shared.addConcentricRouteHistory(centerLat: centerLat, centerLng: centerLng, radius: radius, step: step, mode: mode)
+            self.showToast("已啟動同心圓種花 (\(nodes.count) 點，無限循環)")
         }
-    }
-        SavedDatabaseStore.shared.addConcentricRouteHistory(centerLat: centerLat, centerLng: centerLng, radius: radius, step: step, mode: mode)
-        showToast("已啟動同心圓種花 (\(nodes.count) 點，無限循環)")
     }
 
     /// 執行指定歷史紀錄項目 (支援單點瞬移、直線循跡、繞圈種花、跳收果實、同心圓)

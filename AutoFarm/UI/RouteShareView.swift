@@ -6,6 +6,8 @@ public struct RouteShareView: View {
     @ObservedObject var session = AutoFarmSession.shared
     @Environment(\.dismiss) var dismiss
 
+    public let initialRoute: SavedRoute?
+
     // 點位來源：0 = 完整實際巡航/繞路軌跡 (預設), 1 = 原始基準航點
     @State private var selectedSourceIndex: Int = 0
 
@@ -33,10 +35,18 @@ public struct RouteShareView: View {
     @State private var shareOutputUrlText: String? = nil
     @State private var errorMessage: String? = nil
 
-    public init() {}
+    public init(initialRoute: SavedRoute? = nil) {
+        self.initialRoute = initialRoute
+        if let r = initialRoute {
+            self._customFileName = State(initialValue: r.name)
+        }
+    }
 
     // MARK: - 計算輸入點位來源集合
     private var baseRawPoints: [RouteNode] {
+        if let r = initialRoute, !r.nodes.isEmpty {
+            return r.nodes
+        }
         if selectedSourceIndex == 0 {
             if !session.routePoints.isEmpty {
                 return session.routePoints
@@ -60,6 +70,9 @@ public struct RouteShareView: View {
     private var exportBaseName: String {
         let trimmed = customFileName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
+        if let r = initialRoute, !r.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return r.name
+        }
         let sessionName = session.activeRouteName.trimmingCharacters(in: .whitespacesAndNewlines)
         return sessionName.isEmpty || sessionName == "無路線" ? "自訂路線" : sessionName
     }
@@ -470,9 +483,13 @@ public struct RouteShareView: View {
             .navigationBarItems(trailing: Button("完成") { dismiss() })
             .onAppear {
                 if customFileName.isEmpty {
-                    customFileName = session.activeRouteName == "無路線" ? "" : session.activeRouteName
+                    if let r = initialRoute, !r.name.isEmpty {
+                        customFileName = r.name
+                    } else {
+                        customFileName = session.activeRouteName == "無路線" ? "" : session.activeRouteName
+                    }
                 }
-                if !session.routePoints.isEmpty {
+                if initialRoute != nil || !session.routePoints.isEmpty {
                     selectedSourceIndex = 0
                 }
                 recalculateRoute()

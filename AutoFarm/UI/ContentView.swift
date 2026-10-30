@@ -13,6 +13,7 @@ public struct ContentView: View {
     @State private var isSettingsPresented: Bool = false
     @State private var isDatabasePresented: Bool = false
     @State private var isFruitNoticeSheetPresented: Bool = false
+    @State private var isBlockedMushroomPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -131,6 +132,20 @@ public struct ContentView: View {
                                 .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
                         }
 
+                        // 卡菇助手快捷鍵 (對齊安卓卡菇定時管理)
+                        Button(action: {
+                            hideKeyboard()
+                            self.isBlockedMushroomPresented = true
+                        }) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 18))
+                                .foregroundColor(.orange)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+                        }
+
                         // 一鍵停止虛擬定位回到真實 GPS
                         Button(action: {
                             hideKeyboard()
@@ -213,6 +228,19 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isFruitNoticeSheetPresented) {
             FruitNoticeSheet()
+        }
+        .sheet(isPresented: $isBlockedMushroomPresented) {
+            BlockedMushroomView()
+        }
+        .alert(item: $session.handshakeAlertInfo) { info in
+            Alert(
+                title: Text(info.title),
+                message: Text(info.message),
+                primaryButton: .default(Text("前往設定檢測")) {
+                    isSettingsPresented = true
+                },
+                secondaryButton: .cancel(Text("我知道了"))
+            )
         }
         .alert(isPresented: $station.shouldPromptSpotRelease) {
             let cardName = station.spotToRelease?.pointName ?? "此花田"

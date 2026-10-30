@@ -41,6 +41,9 @@ public struct ControlDrawerView: View {
     @State private var routeToShare: SavedRoute? = nil
     @State private var isRouteSharePresented: Bool = false
 
+    // 卡菇清單 Sheet
+    @State private var isBlockedMushroomPresented: Bool = false
+
     // 運行中動態切換路線確認對話盒
     @State private var isRouteSwitchConfirmPresented: Bool = false
     @State private var pendingTargetRoute: SavedRoute? = nil
@@ -135,11 +138,10 @@ public struct ControlDrawerView: View {
             RouteEditorView(route: route)
         }
         .sheet(isPresented: $isRouteSharePresented) {
-            if let r = routeToShare {
-                SingleRouteShareSheet(route: r)
-            } else {
-                RouteShareView()
-            }
+            RouteShareView(initialRoute: routeToShare)
+        }
+        .sheet(isPresented: $isBlockedMushroomPresented) {
+            BlockedMushroomView()
         }
         .alert(isPresented: $isRouteSwitchConfirmPresented) {
             routeSwitchConfirmationAlert
@@ -260,6 +262,24 @@ public struct ControlDrawerView: View {
                     .background(Color.blue)
                     .foregroundColor(.white)
                     .cornerRadius(8)
+            }
+
+            // 卡菇清單快捷按鈕 (對齊安卓卡菇定時管理)
+            Button(action: {
+                hideKeyboard()
+                self.isBlockedMushroomPresented = true
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("卡菇")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color.purple.opacity(0.15))
+                .foregroundColor(.purple)
+                .cornerRadius(8)
             }
 
             // 停止虛擬定位還原真實 GPS
@@ -1314,22 +1334,4 @@ extension View {
     public func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
-}
-
-/// 單一路線原生分享 Sheet
-public struct SingleRouteShareSheet: UIViewControllerRepresentable {
-    public let route: SavedRoute
-
-    public init(route: SavedRoute) {
-        self.route = route
-    }
-
-    public func makeUIViewController(context: Context) -> UIActivityViewController {
-        let content = route.nodes.map { "\($0.lat), \($0.lng)" }.joined(separator: "\n")
-        let item = "【\(route.name)】路徑座標點位：\n\(content)"
-        let av = UIActivityViewController(activityItems: [item], applicationActivities: nil)
-        return av
-    }
-
-    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

@@ -44,15 +44,23 @@ public struct StatusHUDView: View {
         VStack(spacing: 6) {
             // Toast 浮動警示
             if let toast = session.toastMessage {
-                Text(toast)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.85))
-                    .cornerRadius(20)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .animation(.easeInOut, value: session.toastMessage)
+                HStack(spacing: 6) {
+                    if session.isToastError {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.yellow)
+                    }
+                    Text(toast)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(session.isToastError ? Color.red.opacity(0.92) : Color.black.opacity(0.85))
+                .cornerRadius(20)
+                .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 3)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .animation(.easeInOut, value: session.toastMessage)
             }
 
             // HUD 核心資訊條

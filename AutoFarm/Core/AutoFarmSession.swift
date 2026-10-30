@@ -4,8 +4,25 @@ import Combine
 import SwiftUI
 import UIKit
 
+public struct HandshakeAlertInfo: Identifiable {
+    public let id = UUID()
+    public let title: String
+    public let message: String
+    public let actionName: String
+
+    public init(title: String, message: String, actionName: String) {
+        self.title = title
+        self.message = message
+        self.actionName = actionName
+    }
+}
+
 public final class AutoFarmSession: ObservableObject {
     public static let shared = AutoFarmSession()
+
+    // Handshake Alert State
+    @Published public var handshakeAlertInfo: HandshakeAlertInfo? = nil
+    @Published public var isToastError: Bool = false
 
     // MARK: - Published State
     @Published public var currentLat: Double = 25.033964
@@ -916,8 +933,27 @@ public final class AutoFarmSession: ObservableObject {
                 case .failure(let err):
                     self.hasTestedHandshake = false
                     self.isSimulatingLocation = false
-                    self.showToast("⚠️ 通道尚未握手或連線失敗！請確認 LocalDevVPN 是否已連線")
-                    print("[AutoFarmSession] Handshake failed before \(actionName): \(err.localizedDescription)")
+                    let detailed = LocationEngine.lastDetailedError
+                    let reason = detailed.isEmpty ? err.localizedDescription : detailed
+                    self.showToast("⚠️ 通道尚未握手或連線失敗！", isError: true)
+
+                    let alertMsg = """
+在執行【\(actionName)】前檢測到調試通道尚未建立連線。
+
+可能原因與排查方式：
+1. 請確認 LocalDevVPN (10.7.1.1) 是否已連線。
+2. 4G 免 Wi-Fi SOP：請下拉手機控制中心先暫時關閉「行動數據」，在 Wi-Fi 下至設定中點擊【測試通道握手】，成功後再開回行動數據。
+3. 請至「設定」確認已載入有效的 RPPairing 配對憑證。
+
+診斷資訊：
+\(reason)
+"""
+                    self.handshakeAlertInfo = HandshakeAlertInfo(
+                        title: "⚠️ 通道尚未握手 / 連線失敗",
+                        message: alertMsg,
+                        actionName: actionName
+                    )
+                    print("[AutoFarmSession] Handshake failed before \(actionName): \(reason)")
                 }
             }
         }
@@ -945,22 +981,27 @@ public final class AutoFarmSession: ObservableObject {
                     self.isSimulatingLocation = true
                     self.lastPushTime = Date().timeIntervalSinceReferenceDate
                     self.ensureEngineRunning()
-                    self.showToast("通道握手成功！可開回行動數據開始巡航")
+                    self.showToast("🟢 通道握手成功！可開回行動數據開始巡航")
                 case .failure(let err):
                     self.hasTestedHandshake = false
                     self.isSimulatingLocation = false
-                    self.showToast("連線未就緒: \(err.localizedDescription)")
+                    let detailed = LocationEngine.lastDetailedError
+                    let reason = detailed.isEmpty ? err.localizedDescription : detailed
+                    self.showToast("連線未就緒: \(reason)", isError: true)
                 }
             }
         }
     }
 
-    public func showToast(_ msg: String) {
+    public func showToast(_ msg: String, isError: Bool = false) {
         DispatchQueue.main.async {
             self.toastMessage = msg
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            self.isToastError = isError
+            let duration = isError ? 4.0 : 2.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
                 if self.toastMessage == msg {
                     self.toastMessage = nil
+                    self.isToastError = false
                 }
             }
         }

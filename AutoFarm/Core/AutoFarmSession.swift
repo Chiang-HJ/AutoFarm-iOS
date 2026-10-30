@@ -39,6 +39,21 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var joystickIntensity: Double = 0.0
     @Published public var isJoystickLocked: Bool = false
 
+    // 是否顯示虛擬方向盤/搖桿 (使用者設定開關，預設為 true，持久化至 UserDefaults)
+    @Published public var isJoystickVisible: Bool = {
+        if UserDefaults.standard.object(forKey: "AutoFarm_ShowVirtualJoystick") != nil {
+            return UserDefaults.standard.bool(forKey: "AutoFarm_ShowVirtualJoystick")
+        }
+        return true
+    }() {
+        didSet {
+            UserDefaults.standard.set(isJoystickVisible, forKey: "AutoFarm_ShowVirtualJoystick")
+        }
+    }
+
+    // 本次啟動以來是否已成功測試/驗證過通道握手
+    @Published public var hasTestedHandshake: Bool = false
+
     // Tuning & Pairing
     @Published public var deviceIP: String = "10.7.1.1"
     @Published public var pairingFilePath: String = ""
@@ -172,102 +187,116 @@ public final class AutoFarmSession: ObservableObject {
     /// 啟動直線巡航
     public func startLinearRoute(name: String, basePoints: [RouteNode], loops: Int, mode: LoopMode, startLoop: Int = 0, startIndex: Int = 0) {
         guard !basePoints.isEmpty else { return }
-        self.originalBasePoints = basePoints
-        self.routePoints = LinearPatrolEngine.prepareRouteNodes(basePoints: basePoints, mode: mode)
-        self.activeRouteName = name
-        self.routeLoopTarget = loops
-        self.routeCurrentLoop = max(startLoop, 0)
-        self.executionMode = 0
-        self.loopMode = mode
+        ensureHandshakeVerified(actionName: "直線巡航") { [weak self] in
+            guard let self = self else { return }
+            self.originalBasePoints = basePoints
+            self.routePoints = LinearPatrolEngine.prepareRouteNodes(basePoints: basePoints, mode: mode)
+            self.activeRouteName = name
+            self.routeLoopTarget = loops
+            self.routeCurrentLoop = max(startLoop, 0)
+            self.executionMode = 0
+            self.loopMode = mode
 
-        let validIndex = min(max(startIndex, 0), self.routePoints.count - 1)
-        self.currentRouteIndex = validIndex
-        self.currentLat = self.routePoints[validIndex].lat
-        self.currentLng = self.routePoints[validIndex].lng
-        self.isRoutePaused = false
-        self.cooldownRemainingSec = 0
-        self.waitAccumulatedMs = 0.0
+            let validIndex = min(max(startIndex, 0), self.routePoints.count - 1)
+            self.currentRouteIndex = validIndex
+            self.currentLat = self.routePoints[validIndex].lat
+            self.currentLng = self.routePoints[validIndex].lng
+            self.isRoutePaused = false
+            self.cooldownRemainingSec = 0
+            self.waitAccumulatedMs = 0.0
 
-        pushCurrentLocation()
-        ensureEngineRunning()
-        SavedDatabaseStore.shared.addLinearRouteHistory(name: name, basePoints: basePoints, loops: loops, mode: mode)
-        showToast("已開始路線【\(name)】")
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
+            SavedDatabaseStore.shared.addLinearRouteHistory(name: name, basePoints: basePoints, loops: loops, mode: mode)
+            self.showToast("已開始路線【\(name)】")
+        }
     }
 
     /// 啟動多花點雙圈種花
     public func startFlowerRoute(name: String, basePoints: [RouteNode], loops: Int, settings: MultiFlowerSettings, startLoop: Int = 0, startIndex: Int = 0) {
         guard !basePoints.isEmpty else { return }
-        self.originalBasePoints = basePoints
-        self.flowerSettings = settings
-        self.routePoints = FlowerPlantingEngine.generateMultiFlowerNodes(basePoints: basePoints, settings: settings)
-        self.activeRouteName = name
-        self.routeLoopTarget = loops
-        self.routeCurrentLoop = max(startLoop, 0)
-        self.executionMode = 1
+        ensureHandshakeVerified(actionName: "繞圈種花") { [weak self] in
+            guard let self = self else { return }
+            self.originalBasePoints = basePoints
+            self.flowerSettings = settings
+            self.routePoints = FlowerPlantingEngine.generateMultiFlowerNodes(basePoints: basePoints, settings: settings)
+            self.activeRouteName = name
+            self.routeLoopTarget = loops
+            self.routeCurrentLoop = max(startLoop, 0)
+            self.executionMode = 1
 
-        let validIndex = min(max(startIndex, 0), self.routePoints.count - 1)
-        self.currentRouteIndex = validIndex
-        self.currentLat = self.routePoints[validIndex].lat
-        self.currentLng = self.routePoints[validIndex].lng
-        self.isRoutePaused = false
-        self.cooldownRemainingSec = 0
-        self.waitAccumulatedMs = 0.0
+            let validIndex = min(max(startIndex, 0), self.routePoints.count - 1)
+            self.currentRouteIndex = validIndex
+            self.currentLat = self.routePoints[validIndex].lat
+            self.currentLng = self.routePoints[validIndex].lng
+            self.isRoutePaused = false
+            self.cooldownRemainingSec = 0
+            self.waitAccumulatedMs = 0.0
 
-        pushCurrentLocation()
-        ensureEngineRunning()
-        SavedDatabaseStore.shared.addFlowerRouteHistory(name: name, basePoints: basePoints, loops: loops, settings: settings)
-        showToast("已啟動繞圈種花 (\(self.routePoints.count) 點)")
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
+            SavedDatabaseStore.shared.addFlowerRouteHistory(name: name, basePoints: basePoints, loops: loops, settings: settings)
+            self.showToast("已啟動繞圈種花 (\(self.routePoints.count) 點)")
+        }
     }
 
     /// 啟動跳收果實
     public func startFruitRoute(name: String, basePoints: [RouteNode], loops: Int, walkDistance: Double = 80.0, startLoop: Int = 0, startIndex: Int = 0) {
         guard !basePoints.isEmpty else { return }
-        self.originalBasePoints = basePoints
-        self.fruitWalkDistance = walkDistance
-        self.routePoints = FruitHarvestEngine.prepareFruitNodes(basePoints: basePoints, walkDistanceMeters: walkDistance)
-        self.activeRouteName = name
-        self.routeLoopTarget = loops
-        self.routeCurrentLoop = max(startLoop, 0)
-        self.executionMode = 2
+        ensureHandshakeVerified(actionName: "跳收果實") { [weak self] in
+            guard let self = self else { return }
+            self.originalBasePoints = basePoints
+            self.fruitWalkDistance = walkDistance
+            self.routePoints = FruitHarvestEngine.prepareFruitNodes(basePoints: basePoints, walkDistanceMeters: walkDistance)
+            self.activeRouteName = name
+            self.routeLoopTarget = loops
+            self.routeCurrentLoop = max(startLoop, 0)
+            self.executionMode = 2
 
-        let validIndex = min(max(startIndex, 0), self.routePoints.count - 1)
-        self.currentRouteIndex = validIndex
-        self.currentLat = self.routePoints[validIndex].lat
-        self.currentLng = self.routePoints[validIndex].lng
-        self.isRoutePaused = false
-        self.cooldownRemainingSec = 0
-        self.waitAccumulatedMs = 0.0
+            let validIndex = min(max(startIndex, 0), self.routePoints.count - 1)
+            self.currentRouteIndex = validIndex
+            self.currentLat = self.routePoints[validIndex].lat
+            self.currentLng = self.routePoints[validIndex].lng
+            self.isRoutePaused = false
+            self.cooldownRemainingSec = 0
+            self.waitAccumulatedMs = 0.0
 
-        pushCurrentLocation()
-        ensureEngineRunning()
-        SavedDatabaseStore.shared.addFruitRouteHistory(name: name, basePoints: basePoints, loops: loops, walkDistance: walkDistance)
-        showToast("已啟動跳收果實模式")
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
+            SavedDatabaseStore.shared.addFruitRouteHistory(name: name, basePoints: basePoints, loops: loops, walkDistance: walkDistance)
+            self.showToast("已啟動跳收果實模式")
+        }
     }
 
     /// 啟動獨立同心圓種花
     public func startConcentricFlower(centerLat: Double, centerLng: Double, radius: Double, step: Double, mode: ConcentricMode) {
-        let nodes = FlowerPlantingEngine.generateConcentricRoute(
-            centerLat: centerLat,
-            centerLng: centerLng,
-            targetRadiusM: radius,
-            stepWidthM: step,
-            mode: mode
-        )
-        guard !nodes.isEmpty else { return }
-        self.originalBasePoints = [RouteNode(lat: centerLat, lng: centerLng, label: "花苞中心")]
-        self.routePoints = nodes
-        self.activeRouteName = "同心圓種花"
-        self.routeLoopTarget = 0 // 無限循環
-        self.routeCurrentLoop = 0
-        self.executionMode = 3
-        self.currentRouteIndex = 0
-        self.currentLat = nodes[0].lat
-        self.currentLng = nodes[0].lng
-        self.isRoutePaused = false
-        self.cooldownRemainingSec = 0
+        ensureHandshakeVerified(actionName: "同心圓種花") { [weak self] in
+            guard let self = self else { return }
+            let nodes = FlowerPlantingEngine.generateConcentricRoute(
+                centerLat: centerLat,
+                centerLng: centerLng,
+                targetRadiusM: radius,
+                stepWidthM: step,
+                mode: mode
+            )
+            guard !nodes.isEmpty else { return }
+            self.originalBasePoints = [RouteNode(lat: centerLat, lng: centerLng, label: "花苞中心")]
+            self.routePoints = nodes
+            self.activeRouteName = "同心圓種花"
+            self.routeLoopTarget = 0 // 無限循環
+            self.routeCurrentLoop = 0
+            self.executionMode = 3
+            self.currentRouteIndex = 0
+            self.currentLat = nodes[0].lat
+            self.currentLng = nodes[0].lng
+            self.isRoutePaused = false
+            self.cooldownRemainingSec = 0
 
-        pushCurrentLocation()
-        ensureEngineRunning()
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
+            self.showToast("已啟動同心圓種花 (\(nodes.count) 點)")
+        }
+    }
         SavedDatabaseStore.shared.addConcentricRouteHistory(centerLat: centerLat, centerLng: centerLng, radius: radius, step: step, mode: mode)
         showToast("已啟動同心圓種花 (\(nodes.count) 點，無限循環)")
     }
@@ -308,23 +337,27 @@ public final class AutoFarmSession: ObservableObject {
 
     /// 暫停 / 繼續切換 (方案 A: 若有臨時瞬移插隊，按繼續自動瞬移回離開點接續巡航)
     public func toggleRoutePause() {
-        self.isRoutePaused.toggle()
         if self.isRoutePaused {
+            ensureHandshakeVerified(actionName: "繼續巡航") { [weak self] in
+                guard let self = self else { return }
+                self.isRoutePaused = false
+                // 如果之前有臨時瞬移插隊，瞬移回剛才離開點接續
+                if let departure = self.detourDepartureCoord {
+                    self.currentLat = departure.latitude
+                    self.currentLng = departure.longitude
+                    self.detourDepartureCoord = nil
+                    self.pushCurrentLocation()
+                    self.showToast("已返回離開點，繼續巡航路線")
+                } else {
+                    self.showToast("路線繼續執行")
+                }
+                self.ensureEngineRunning()
+            }
+        } else {
+            self.isRoutePaused = true
             self.waitAccumulatedMs = 0.0
             self.cooldownRemainingSec = 0
             showToast("路線已暫停")
-        } else {
-            // 如果之前有臨時瞬移插隊，瞬移回剛才離開點接續
-            if let departure = detourDepartureCoord {
-                self.currentLat = departure.latitude
-                self.currentLng = departure.longitude
-                self.detourDepartureCoord = nil
-                pushCurrentLocation()
-                showToast("已返回離開點，繼續巡航路線")
-            } else {
-                showToast("路線繼續執行")
-            }
-            ensureEngineRunning()
         }
     }
 
@@ -361,36 +394,39 @@ public final class AutoFarmSession: ObservableObject {
 
     /// 跳轉至指定基準航點開始運行 (點擊數字球時觸發)
     public func jumpToWaypoint(index: Int) {
-        let validIdx = min(max(index, 0), max(displayWaypoints.count - 1, 0))
-        if executionMode == 1 { // 種花模式：尋找對應 flowerIndex 的第一個節點
-            let targetFlowerNum = validIdx + 1
-            if let nodeIdx = routePoints.firstIndex(where: { $0.flowerIndex == targetFlowerNum }) {
+        ensureHandshakeVerified(actionName: "跳點巡航") { [weak self] in
+            guard let self = self else { return }
+            let validIdx = min(max(index, 0), max(self.displayWaypoints.count - 1, 0))
+            if self.executionMode == 1 { // 種花模式：尋找對應 flowerIndex 的第一個節點
+                let targetFlowerNum = validIdx + 1
+                if let nodeIdx = self.routePoints.firstIndex(where: { $0.flowerIndex == targetFlowerNum }) {
+                    self.currentRouteIndex = nodeIdx
+                    self.currentLat = self.routePoints[nodeIdx].lat
+                    self.currentLng = self.routePoints[nodeIdx].lng
+                } else if validIdx < self.displayWaypoints.count {
+                    let node = self.displayWaypoints[validIdx]
+                    self.currentLat = node.lat
+                    self.currentLng = node.lng
+                }
+            } else if !self.originalBasePoints.isEmpty && self.routePoints.count > self.originalBasePoints.count {
+                let ratio = Double(validIdx) / Double(self.originalBasePoints.count)
+                let nodeIdx = min(Int(ratio * Double(self.routePoints.count)), max(self.routePoints.count - 1, 0))
                 self.currentRouteIndex = nodeIdx
-                self.currentLat = routePoints[nodeIdx].lat
-                self.currentLng = routePoints[nodeIdx].lng
-            } else if validIdx < displayWaypoints.count {
-                let node = displayWaypoints[validIdx]
-                self.currentLat = node.lat
-                self.currentLng = node.lng
+                self.currentLat = self.routePoints[nodeIdx].lat
+                self.currentLng = self.routePoints[nodeIdx].lng
+            } else if validIdx < self.routePoints.count {
+                self.currentRouteIndex = validIdx
+                self.currentLat = self.routePoints[validIdx].lat
+                self.currentLng = self.routePoints[validIdx].lng
             }
-        } else if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
-            let ratio = Double(validIdx) / Double(originalBasePoints.count)
-            let nodeIdx = min(Int(ratio * Double(routePoints.count)), max(routePoints.count - 1, 0))
-            self.currentRouteIndex = nodeIdx
-            self.currentLat = routePoints[nodeIdx].lat
-            self.currentLng = routePoints[nodeIdx].lng
-        } else if validIdx < routePoints.count {
-            self.currentRouteIndex = validIdx
-            self.currentLat = routePoints[validIdx].lat
-            self.currentLng = routePoints[validIdx].lng
+            self.cooldownRemainingSec = 0
+            self.waitAccumulatedMs = 0.0
+            self.isRoutePaused = false // 從此點開始運行，保持自動巡航
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
+            self.autoSaveCurrentProgress()
+            self.showToast("已從第 \(validIdx + 1) 個航點開始巡航")
         }
-        self.cooldownRemainingSec = 0
-        self.waitAccumulatedMs = 0.0
-        self.isRoutePaused = false // 從此點開始運行，保持自動巡航
-        pushCurrentLocation()
-        ensureEngineRunning()
-        autoSaveCurrentProgress()
-        showToast("已從第 \(validIdx + 1) 個航點開始巡航")
     }
 
     /// 刪除指定索引的航點 (地圖點擊數字球刪除點位)
@@ -461,16 +497,19 @@ public final class AutoFarmSession: ObservableObject {
             return
         }
 
-        // 1. 自動暫停路線
-        if !isRoutePaused {
-            self.isRoutePaused = true
-        }
+        ensureHandshakeVerified(actionName: "路線幾何中心") { [weak self] in
+            guard let self = self else { return }
+            // 1. 自動暫停路線
+            if !self.isRoutePaused {
+                self.isRoutePaused = true
+            }
 
-        // 2. 瞬移至幾何中心點
-        self.currentLat = center.lat
-        self.currentLng = center.lng
-        pushCurrentLocation()
-        showToast("已定位至【\(activeRouteName)】幾何中心 (已暫停路線)")
+            // 2. 瞬移至幾何中心點
+            self.currentLat = center.lat
+            self.currentLng = center.lng
+            self.pushCurrentLocation()
+            self.showToast("已定位至【\(self.activeRouteName)】幾何中心 (已暫停路線)")
+        }
     }
 
     /// 暫存路徑進度
@@ -497,25 +536,28 @@ public final class AutoFarmSession: ObservableObject {
 
     /// 恢復暫存進度
     public func resumeProgress(_ progress: RouteProgress) {
-        self.originalBasePoints = progress.basePoints ?? []
-        self.routePoints = progress.routePoints
-        self.activeRouteName = progress.routeName
-        self.routeLoopTarget = progress.loopTarget
-        self.routeCurrentLoop = progress.currentLoop
-        self.executionMode = progress.executionMode
-        self.fruitWalkDistance = progress.fruitWalkDistance
+        ensureHandshakeVerified(actionName: "接續進度") { [weak self] in
+            guard let self = self else { return }
+            self.originalBasePoints = progress.basePoints ?? []
+            self.routePoints = progress.routePoints
+            self.activeRouteName = progress.routeName
+            self.routeLoopTarget = progress.loopTarget
+            self.routeCurrentLoop = progress.currentLoop
+            self.executionMode = progress.executionMode
+            self.fruitWalkDistance = progress.fruitWalkDistance
 
-        let validIndex = min(max(progress.currentRouteIndex, 0), self.routePoints.count - 1)
-        self.currentRouteIndex = validIndex
-        self.currentLat = self.routePoints[validIndex].lat
-        self.currentLng = self.routePoints[validIndex].lng
-        self.isRoutePaused = false
-        self.cooldownRemainingSec = 0
-        self.waitAccumulatedMs = 0.0
+            let validIndex = min(max(progress.currentRouteIndex, 0), self.routePoints.count - 1)
+            self.currentRouteIndex = validIndex
+            self.currentLat = self.routePoints[validIndex].lat
+            self.currentLng = self.routePoints[validIndex].lng
+            self.isRoutePaused = false
+            self.cooldownRemainingSec = 0
+            self.waitAccumulatedMs = 0.0
 
-        pushCurrentLocation()
-        ensureEngineRunning()
-        showToast("已接續【\(progress.routeName)】進度 (第 \(progress.currentLoop + 1) 圈)")
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
+            self.showToast("已接續【\(progress.routeName)】進度 (第 \(progress.currentLoop + 1) 圈)")
+        }
     }
 
     /// 停止路線 (僅停止自動行進，不解除虛擬定位，角色維持在當前座標)
@@ -550,6 +592,7 @@ public final class AutoFarmSession: ObservableObject {
         BackgroundKeepAlive.shared.stop()
         endBackgroundTask()
         self.isSimulatingLocation = false
+        self.hasTestedHandshake = false
         self.isRoutePaused = true
 
         RealLocationWatcher.shared.requestRealLocation { [weak self] coord in
@@ -568,29 +611,32 @@ public final class AutoFarmSession: ObservableObject {
     }
 
     public func teleport(to lat: Double, lng: Double, label: String = "") {
-        // 若當前有排程路線且尚未記錄過插隊中斷點
-        if !routePoints.isEmpty {
-            if detourDepartureCoord == nil {
-                self.detourDepartureCoord = CLLocationCoordinate2D(latitude: currentLat, longitude: currentLng)
+        ensureHandshakeVerified(actionName: "瞬移定位") { [weak self] in
+            guard let self = self else { return }
+            // 若當前有排程路線且尚未記錄過插隊中斷點
+            if !self.routePoints.isEmpty {
+                if self.detourDepartureCoord == nil {
+                    self.detourDepartureCoord = CLLocationCoordinate2D(latitude: self.currentLat, longitude: self.currentLng)
+                }
+                self.isRoutePaused = true
+            } else if !self.isRoutePaused {
+                self.isRoutePaused = true
             }
-            self.isRoutePaused = true
-        } else if !isRoutePaused {
-            isRoutePaused = true
-        }
 
-        self.currentLat = lat
-        self.currentLng = lng
-        self.lastPushTime = Date().timeIntervalSinceReferenceDate
-        pushCurrentLocation()
-        ensureEngineRunning()
+            self.currentLat = lat
+            self.currentLng = lng
+            self.lastPushTime = Date().timeIntervalSinceReferenceDate
+            self.pushCurrentLocation()
+            self.ensureEngineRunning()
 
-        let pointLabel = label.isEmpty ? "自訂座標" : label
-        SavedDatabaseStore.shared.addTeleportHistory(lat: lat, lng: lng, label: pointLabel)
+            let pointLabel = label.isEmpty ? "自訂座標" : label
+            SavedDatabaseStore.shared.addTeleportHistory(lat: lat, lng: lng, label: pointLabel)
 
-        if detourDepartureCoord != nil {
-            showToast("已瞬移至【\(pointLabel)】(路線已暫停，按繼續自動返回原位接續)")
-        } else {
-            showToast("已瞬移至 \(String(format: "%.5f", lat)), \(String(format: "%.5f", lng))")
+            if self.detourDepartureCoord != nil {
+                self.showToast("已瞬移至【\(pointLabel)】(路線已暫停，按繼續自動返回原位接續)")
+            } else {
+                self.showToast("已瞬移至 \(String(format: "%.5f", lat)), \(String(format: "%.5f", lng))")
+            }
         }
     }
 
@@ -822,6 +868,9 @@ public final class AutoFarmSession: ObservableObject {
                 switch result {
                 case .success:
                     self.pushFailureCount = 0
+                    if !self.hasTestedHandshake {
+                        self.hasTestedHandshake = true
+                    }
                     if !self.isSimulatingLocation {
                         self.isSimulatingLocation = true
                     }
@@ -834,6 +883,43 @@ public final class AutoFarmSession: ObservableObject {
                         self.showToast("通道暫時斷開，正在重新連線...")
                         print("[AutoFarmSession] LocationEngine error: \(err.localizedDescription)")
                     }
+                }
+            }
+        }
+    }
+
+    /// 檢查通道握手狀態。若尚未握手過，嘗試智慧自動預檢；若成功則執行 action，失敗則提示使用者
+    public func ensureHandshakeVerified(actionName: String = "定位", action: @escaping () -> Void) {
+        if hasTestedHandshake {
+            action()
+            return
+        }
+
+        showToast("🔍 正在進行通道握手預檢...")
+        let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath
+        let targetLat = currentLat
+        let targetLng = currentLng
+        let devIP = deviceIP
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = LocationEngine.set(
+                latitude: targetLat,
+                longitude: targetLng,
+                pairingPath: pPath,
+                deviceIP: devIP
+            )
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.hasTestedHandshake = true
+                    self.isSimulatingLocation = true
+                    self.showToast("🟢 通道握手成功，已建立定位連線！")
+                    action()
+                case .failure(let err):
+                    self.hasTestedHandshake = false
+                    self.isSimulatingLocation = false
+                    self.showToast("⚠️ 通道尚未握手或連線失敗！請確認 LocalDevVPN 是否已連線")
+                    print("[AutoFarmSession] Handshake failed before \(actionName): \(err.localizedDescription)")
                 }
             }
         }
@@ -857,11 +943,13 @@ public final class AutoFarmSession: ObservableObject {
             DispatchQueue.main.async {
                 switch result {
                 case .success:
+                    self.hasTestedHandshake = true
                     self.isSimulatingLocation = true
                     self.lastPushTime = Date().timeIntervalSinceReferenceDate
                     self.ensureEngineRunning()
                     self.showToast("通道握手成功！可開回行動數據開始巡航")
                 case .failure(let err):
+                    self.hasTestedHandshake = false
                     self.isSimulatingLocation = false
                     self.showToast("連線未就緒: \(err.localizedDescription)")
                 }

@@ -366,6 +366,18 @@ public struct SettingsSheet: View {
                     }
                 }
 
+                Section(header: Text("操作與介面設定")) {
+                    Toggle(isOn: $session.isJoystickVisible) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("顯示螢幕虛擬方向盤/搖桿")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("關閉後隱藏主畫面上的方向盤及展開按鈕，釋放地圖視野")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
                 Section(header: Text("帳號管理")) {
                     HStack {
                         Text("目前登入帳號")
@@ -439,10 +451,12 @@ public struct SettingsSheet: View {
             case .success:
                 self.isSuccess = true
                 self.testResultText = "通道握手成功！底層調試服務已就緒，可開回行動數據開始巡航。"
+                session.hasTestedHandshake = true
                 session.isSimulatingLocation = true
             case .failure(let err):
                 self.isSuccess = false
                 self.testResultText = "握手未成功: \(err.localizedDescription)"
+                session.hasTestedHandshake = false
                 session.isSimulatingLocation = false
             }
         }

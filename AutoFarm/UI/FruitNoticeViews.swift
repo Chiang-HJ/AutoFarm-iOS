@@ -422,31 +422,31 @@ private struct FruitFlowerCard: View {
                 .background(Color.orange.opacity(0.08))
                 .cornerRadius(8)
             } else {
-                // 具備匹配路線時的選擇與啟動
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("📋 匹配路線：")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.secondary)
+                // 具備匹配路線時的選擇與啟動 (精簡為單一最佳推薦路線)
+                if let bestMatch = matches.first(where: { $0.isHarvestRecommended }) ?? matches.first {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("📋 推薦收果路線：")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.secondary)
 
-                    ForEach(matches) { match in
                         Button(action: {
                             session.startFruitRoute(
-                                name: match.route.name,
-                                basePoints: match.route.nodes,
+                                name: bestMatch.route.name,
+                                basePoints: bestMatch.route.nodes,
                                 loops: 0,
                                 walkDistance: walkDistance
                             )
-                            session.showToast("🟢 已啟動【\(match.route.name)】跳收果實 (直徑 \(Int(walkDistance))m)！")
+                            session.showToast("🟢 已啟動【\(bestMatch.route.name)】跳收果實 (直徑 \(Int(walkDistance))m)！")
                             onActionFinished()
                         }) {
                             HStack {
-                                Image(systemName: match.isHarvestRecommended ? "checkmark.circle.fill" : "play.circle")
-                                    .foregroundColor(match.isHarvestRecommended ? .green : .blue)
+                                Image(systemName: bestMatch.isHarvestRecommended ? "checkmark.circle.fill" : "play.circle")
+                                    .foregroundColor(bestMatch.isHarvestRecommended ? .green : .blue)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(match.isHarvestRecommended ? "🟢 【推薦】" : "⚪ ")\(match.route.name)")
-                                        .font(.system(size: 13, weight: match.isHarvestRecommended ? .bold : .semibold))
-                                        .foregroundColor(match.isHarvestRecommended ? .green : .primary)
-                                    Text("共 \(match.route.nodes.count) 個航點・以 \(Int(walkDistance))m 直徑收果")
+                                    Text("\(bestMatch.isHarvestRecommended ? "🟢 【推薦】" : "⚪ ")\(bestMatch.route.name)")
+                                        .font(.system(size: 13, weight: bestMatch.isHarvestRecommended ? .bold : .semibold))
+                                        .foregroundColor(bestMatch.isHarvestRecommended ? .green : .primary)
+                                    Text("共 \(bestMatch.route.nodes.count) 個航點・以 \(Int(walkDistance))m 直徑收果")
                                         .font(.system(size: 10))
                                         .foregroundColor(.secondary)
                                 }
@@ -456,7 +456,7 @@ private struct FruitFlowerCard: View {
                                     .foregroundColor(.secondary)
                             }
                             .padding(10)
-                            .background(match.isHarvestRecommended ? Color.green.opacity(0.08) : Color(UIColor.secondarySystemBackground))
+                            .background(bestMatch.isHarvestRecommended ? Color.green.opacity(0.08) : Color(UIColor.secondarySystemBackground))
                             .cornerRadius(8)
                         }
                         .buttonStyle(BorderlessButtonStyle())

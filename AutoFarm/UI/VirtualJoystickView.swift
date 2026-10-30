@@ -73,6 +73,10 @@ public struct VirtualJoystickView: View {
                                 var geoBearing = (angleRad * 180.0 / .pi) + 90.0
                                 if geoBearing < 0 { geoBearing += 360.0 }
 
+                                if intensity > 0 && !session.hasTestedHandshake {
+                                    session.ensureHandshakeVerified(actionName: "虛擬方向盤") {}
+                                }
+
                                 session.joystickAngle = geoBearing
                                 session.joystickIntensity = intensity
                             }

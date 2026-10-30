@@ -23,8 +23,12 @@ public struct ContentView: View {
     // 點選地圖數字球選定之航點索引 (對齊安卓：從此點出發 / 瞬移 / 刪除 / 複製)
     @State private var selectedWaypointIndex: Int? = nil
 
-    // 自由拖曳虛擬搖桿開關位置
-    @State private var joystickPositionOffset: CGSize = .zero
+    // 自由拖曳虛擬搖桿開關位置 (持久化記憶於 UserDefaults)
+    @State private var joystickPositionOffset: CGSize = {
+        let x = UserDefaults.standard.double(forKey: "AutoFarm_Joystick_OffsetX")
+        let y = UserDefaults.standard.double(forKey: "AutoFarm_Joystick_OffsetY")
+        return CGSize(width: x, height: y)
+    }()
     @GestureState private var joystickDragOffset: CGSize = .zero
 
     public init() {}
@@ -153,8 +157,10 @@ public struct ContentView: View {
             }
             .edgesIgnoringSafeArea(.bottom)
 
-            // 3. 可自由拖曳的懸浮方向盤與開關
-            draggableJoystickView
+            // 3. 可自由拖曳的懸浮方向盤與開關 (依據設定顯示/隱藏)
+            if session.isJoystickVisible {
+                draggableJoystickView
+            }
 
             // 4. 點選地圖數字球操作浮動卡片 (對齊安卓：從此點開始運行、瞬移、刪除此航點、複製)
             if let wpIdx = selectedWaypointIndex {
@@ -353,8 +359,16 @@ public struct ContentView: View {
                 // 獨立搖桿開關按鈕 (支援全螢幕任意拖動)
                 Button(action: {
                     hideKeyboard()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        session.isJoystickEnabled = true
+                    if !session.hasTestedHandshake {
+                        session.ensureHandshakeVerified(actionName: "虛擬搖桿") {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                session.isJoystickEnabled = true
+                            }
+                        }
+                    } else {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            session.isJoystickEnabled = true
+                        }
                     }
                 }) {
                     HStack(spacing: 5) {
@@ -380,6 +394,8 @@ public struct ContentView: View {
                 .onEnded { value in
                     joystickPositionOffset.width += value.translation.width
                     joystickPositionOffset.height += value.translation.height
+                    UserDefaults.standard.set(joystickPositionOffset.width, forKey: "AutoFarm_Joystick_OffsetX")
+                    UserDefaults.standard.set(joystickPositionOffset.height, forKey: "AutoFarm_Joystick_OffsetY")
                 }
         )
         .offset(

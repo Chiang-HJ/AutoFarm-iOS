@@ -1,4 +1,6 @@
 import SwiftUI
+import CoreLocation
+import UIKit
 
 public struct RouteShareView: View {
     @ObservedObject var session = AutoFarmSession.shared
@@ -17,6 +19,13 @@ public struct RouteShareView: View {
     @State private var speedInput: String = "15.0"
     @State private var selectedFormat: GpxFormat = .joystick
 
+    // 非同步計算狀態 (對齊 Android 避免阻塞主執行緒)
+    @State private var currentPoints: [RouteNode] = []
+    @State private var isCalculating: Bool = false
+    @State private var calculationProgress: Float = 0.0
+    @State private var calculationStatus: String = ""
+    @State private var calculationTask: Task<Void, Never>? = nil
+
     // Gofile 雲端分享設定
     @State private var gofileToken: String = UserDefaults.standard.string(forKey: "gofile_token") ?? ""
     @State private var isUploading: Bool = false
@@ -26,17 +35,15 @@ public struct RouteShareView: View {
 
     public init() {}
 
-    // MARK: - 計算輸出點位集合
+    // MARK: - 計算輸入點位來源集合
     private var baseRawPoints: [RouteNode] {
         if selectedSourceIndex == 0 {
-            // 優先取實際生成之完整巡航/繞路軌跡 (含花圈、果實、同心圓、繞路)
             if !session.routePoints.isEmpty {
                 return session.routePoints
             } else if !session.originalBasePoints.isEmpty {
                 return session.originalBasePoints
             }
         } else {
-            // 取原始基準航點
             if !session.originalBasePoints.isEmpty {
                 return session.originalBasePoints
             } else if !session.routePoints.isEmpty {
@@ -47,16 +54,7 @@ public struct RouteShareView: View {
     }
 
     private var targetPoints: [RouteNode] {
-        var pts = baseRawPoints
-        if isReversed {
-            pts = pts.reversed()
-        }
-        if enableSmartBypass && pts.count >= 2 {
-            pts = RouteShareManager.processSmartRoute(points: pts, densify: enableDensify)
-        } else if enableDensify && pts.count >= 2 {
-            pts = EngineMath.densifyRoute(points: pts)
-        }
-        return pts
+        return currentPoints
     }
 
     private var exportBaseName: String {
@@ -68,10 +66,9 @@ public struct RouteShareView: View {
 
     private var totalDistanceMeters: Double {
         var total = 0.0
-        let pts = targetPoints
-        guard pts.count >= 2 else { return 0.0 }
-        for i in 0..<(pts.count - 1) {
-            total += EngineMath.getDistance(lat1: pts[i].lat, lon1: pts[i].lng, lat2: pts[i+1].lat, lon2: pts[i+1].lng)
+        guard currentPoints.count >= 2 else { return 0.0 }
+        for i in 0..<(currentPoints.count - 1) {
+            total += EngineMath.getDistance(lat1: currentPoints[i].lat, lon1: currentPoints[i].lng, lat2: currentPoints[i+1].lat, lon2: currentPoints[i+1].lng)
         }
         return total
     }
@@ -96,13 +93,16 @@ public struct RouteShareView: View {
     public var body: some View {
         NavigationView {
             Form {
-                // 1. 點位來源選擇 (解決純點位問題)
+                // 1. 點位來源選擇
                 Section(header: Text("點位來源選擇")) {
                     Picker("點位來源", selection: $selectedSourceIndex) {
                         Text("實際運行/繞路軌跡 (\(session.routePoints.count) 點)").tag(0)
                         Text("原始基準點位 (\(session.originalBasePoints.count) 點)").tag(1)
                     }
                     .pickerStyle(.segmented)
+                    .onChange(of: selectedSourceIndex) { _ in
+                        recalculateRoute()
+                    }
 
                     if selectedSourceIndex == 0 && session.routePoints.count > session.originalBasePoints.count {
                         Text("目前包含雙圈種花、果實漫步或同心圓等完整生成的實際巡航軌跡。")
@@ -111,44 +111,119 @@ public struct RouteShareView: View {
                     }
                 }
 
-                // 2. 基本資訊與統計卡片
+                // 2. 路線基本資訊與統計卡片 (對齊 Android 卡片 1)
                 Section(header: Text("路線基本資訊")) {
                     HStack {
-                        Text("自訂名稱")
+                        Text("檔案名稱")
                         TextField("輸入檔案名稱", text: $customFileName)
                             .multilineTextAlignment(.trailing)
+                        if !customFileName.isEmpty && customFileName != (session.activeRouteName == "無路線" ? "" : session.activeRouteName) {
+                            Button(action: {
+                                customFileName = session.activeRouteName == "無路線" ? "" : session.activeRouteName
+                            }) {
+                                Image(systemName: "arrow.counterclockwise.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
+                        }
                     }
 
                     HStack {
-                        Text("輸出點位")
+                        Text("點位數量")
                         Spacer()
-                        Text("\(targetPoints.count) 點" + (enableDensify ? " (含碎步)" : "") + (enableSmartBypass ? " (含避障)" : ""))
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.primary)
+                        if isCalculating {
+                            Text("計算中 (\(Int(calculationProgress * 100))%)...")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.blue)
+                        } else {
+                            Text("\(currentPoints.count) 個點位" + (enableDensify ? " (含碎步)" : "") + (enableSmartBypass ? " (含避障)" : ""))
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.primary)
+                        }
                     }
 
                     HStack {
                         Text("路線總長")
                         Spacer()
-                        Text(totalDistanceMeters >= 1000 ? String(format: "%.2f 公里", totalDistanceMeters / 1000.0) : "\(Int(totalDistanceMeters)) 公尺")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.blue)
+                        if isCalculating {
+                            Text("計算中...")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text(totalDistanceMeters >= 1000 ? String(format: "%.2f 公里", totalDistanceMeters / 1000.0) : "\(Int(totalDistanceMeters)) 公尺")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.blue)
+                        }
                     }
 
                     HStack {
                         Text("預估耗時 (@\(speedInput) km/h)")
                         Spacer()
-                        Text(estimatedTimeStr)
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.orange)
+                        if isCalculating {
+                            Text("計算中...")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text(estimatedTimeStr)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.orange)
+                        }
+                    }
+
+                    // 計算中進度指示條 (對齊 Android)
+                    if isCalculating {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(calculationStatus.isEmpty ? "正在計算避障繞路..." : calculationStatus)
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.blue)
+                                Spacer()
+                                Text("\(Int(calculationProgress * 100))%")
+                                    .font(.system(size: 13, weight: .heavy))
+                                    .foregroundColor(.blue)
+                            }
+                            ProgressView(value: Double(calculationProgress))
+                                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                        }
+                        .padding(10)
+                        .background(Color.blue.opacity(0.08))
+                        .cornerRadius(10)
                     }
                 }
 
-                // 3. 路線變更與優化選項 (對齊安卓版)
-                Section(header: Text("路線變更與優化選項")) {
-                    // 反轉路線
+                // 3. 移動速度設定 (對齊 Android 卡片 2)
+                Section(header: Text("移動速度設定 (影響預估時間)")) {
+                    HStack(spacing: 8) {
+                        ForEach([("9.5", "9.5km/h (慢走/孵蛋)"), ("15.0", "15km/h (快跑)"), ("30.0", "30km/h (單車)")], id: \.0) { spd, lbl in
+                            Button(action: { speedInput = spd }) {
+                                Text(lbl)
+                                    .font(.system(size: 11, weight: speedInput == spd ? .bold : .regular))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                                    .background(speedInput == spd ? Color.blue : Color(UIColor.secondarySystemBackground))
+                                    .foregroundColor(speedInput == spd ? .white : .primary)
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
+                        }
+                    }
+
+                    HStack {
+                        Text("自訂時速 (km/h)")
+                        Spacer()
+                        TextField("15.0", text: $speedInput)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                    }
+                }
+
+                // 4. 路線變更選項 (對齊 Android 卡片 3：反轉、避障、插點)
+                Section(header: Text("路線變更選項 (反轉、插點、避障)")) {
+                    // 反轉路線按鈕
                     Button(action: {
                         isReversed.toggle()
+                        recalculateRoute()
                     }) {
                         HStack {
                             Image(systemName: "arrow.triangle.2.circlepath")
@@ -163,74 +238,78 @@ public struct RouteShareView: View {
                         }
                     }
 
-                    // 50m 收果安全繞路
+                    // gpxshare 收果安全繞路 Switch (50m 核心避障)
                     Toggle(isOn: $enableSmartBypass) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("套用收果安全繞路 (50m 弧度避障)")
-                                .font(.system(size: 14, weight: .medium))
-                            Text("繞開花田 50m 核心禁區，沿外圍 60~70m 平滑穿梭")
+                            HStack(spacing: 4) {
+                                Image(systemName: "shield.fill")
+                                    .foregroundColor(enableSmartBypass ? .blue : .primary)
+                                    .font(.system(size: 13))
+                                Text("套用收果安全繞路 (50m 弧度避障)")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(enableSmartBypass ? .blue : .primary)
+                            }
+                            Text("使用 gpxshare 演算法繞開花田 50m 禁區核心，沿外圍 60~70m 平滑穿梭")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .onChange(of: enableSmartBypass) { val in
+                        if val {
+                            enableDensify = true
+                        }
+                        recalculateRoute()
+                    }
 
-                    // 模擬真人碎步插點
+                    // 模擬步行碎步插點 Switch
                     Toggle(isOn: $enableDensify) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("模擬真人碎步插點 (densifyRoute)")
-                                .font(.system(size: 14, weight: .medium))
-                            Text("長直線中每 100~150m 自動補隨機步伐防直飛")
+                            HStack(spacing: 4) {
+                                Image(systemName: "figure.walk")
+                                    .foregroundColor(enableDensify ? .blue : .primary)
+                                    .font(.system(size: 13))
+                                Text("啟用模擬步行插點 (平滑繞行防鎖)")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            Text("在長直線距離中每 100~150m 自動補隨機碎步防直飛偵測")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
-
-                    // 移動時速快捷設定
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("預估時速 (km/h)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 8) {
-                            Button("9.5 (慢走)") { speedInput = "9.5" }
-                                .buttonStyle(.bordered)
-                                .font(.caption)
-                            Button("15.0 (快跑)") { speedInput = "15.0" }
-                                .buttonStyle(.bordered)
-                                .font(.caption)
-                            Button("30.0 (單車)") { speedInput = "30.0" }
-                                .buttonStyle(.bordered)
-                                .font(.caption)
-                            Spacer()
-                            TextField("15.0", text: $speedInput)
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 60)
-                        }
+                    .onChange(of: enableDensify) { _ in
+                        recalculateRoute()
                     }
                 }
 
-                // 4. GPX 格式與原生分享
-                Section(header: Text("GPX 格式與本機分享")) {
-                    Picker("選擇格式", selection: $selectedFormat) {
-                        ForEach(GpxFormat.allCases) { format in
-                            Text(format.displayName).tag(format)
+                // 5. 飛人匯出格式選擇 (對齊 Android 卡片 4：5 款格式 Radio 說明)
+                Section(header: Text("選擇 GPX 匯出格式")) {
+                    ForEach(GpxFormat.allCases) { fmt in
+                        Button(action: { selectedFormat = fmt }) {
+                            HStack {
+                                Image(systemName: selectedFormat == fmt ? "largecircle.fill.circle" : "circle")
+                                    .foregroundColor(selectedFormat == fmt ? .blue : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(fmt.displayName)
+                                        .font(.system(size: 14, weight: selectedFormat == fmt ? .bold : .regular))
+                                        .foregroundColor(.primary)
+                                    Text(fmt.isTrack ? "適合支援自動行走的軌跡模式 (TRK 軌跡)" : "適合標記地標點位的航點模式 (WPT 航點)")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
                         }
-                    }
-
-                    Button(action: exportAndShareSingleGpx) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("系統分享 \(selectedFormat.displayName)")
-                                .fontWeight(.bold)
-                        }
+                        .buttonStyle(BorderlessButtonStyle())
                     }
                 }
 
-                // 5. Gofile 雲端分享 (對齊安卓版完整功能)
-                Section(header: Text("Gofile 雲端分享 (產生公開短網址)")) {
+                // 6. 雲端分享設定與產生網址 (對齊 Android 卡片 5：Gofile 整合)
+                Section(header: Text("雲端分享設定 (產生公開下載網址)")) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("Gofile Account Token")
+                            Image(systemName: "cloud.fill")
+                                .foregroundColor(.purple)
+                            Text("Gofile API Token")
                                 .font(.system(size: 13, weight: .medium))
                             Spacer()
                             Text("選填")
@@ -242,7 +321,7 @@ public struct RouteShareView: View {
                             .onChange(of: gofileToken) { val in
                                 UserDefaults.standard.set(val.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gofile_token")
                             }
-                        Text("選填。填寫將自動歸戶至您的 Gofile 帳號管理；留空則以訪客匿名身份上傳。Token 會自動儲存於本機。")
+                        Text("想產生像 gpxshare 一樣的公開下載連結？填寫將自動歸戶至您的 Gofile 帳號；若無亦可留空以訪客身份匿名上傳。Token 會自動儲存於本機。")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -266,12 +345,13 @@ public struct RouteShareView: View {
                                     .font(.system(size: 13, weight: .bold))
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 9)
                             .background(Color.purple)
                             .foregroundColor(.white)
-                            .cornerRadius(8)
+                            .cornerRadius(9)
                         }
-                        .disabled(isUploading || targetPoints.isEmpty)
+                        .buttonStyle(BorderlessButtonStyle())
+                        .disabled(isUploading || currentPoints.isEmpty || isCalculating)
 
                         // 按鈕 2: 5 格式放入同資料夾
                         Button(action: uploadAllFormatsFolder) {
@@ -281,17 +361,18 @@ public struct RouteShareView: View {
                                     .font(.system(size: 13, weight: .bold))
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 9)
                             .background(Color.blue)
                             .foregroundColor(.white)
-                            .cornerRadius(8)
+                            .cornerRadius(9)
                         }
-                        .disabled(isUploading || targetPoints.isEmpty)
+                        .buttonStyle(BorderlessButtonStyle())
+                        .disabled(isUploading || currentPoints.isEmpty || isCalculating)
                     }
 
-                    // 雲端分享結果展示
+                    // 雲端分享結果展示 (對齊 Android：文字框 + 一鍵複製 + 轉傳到 LINE / 聊天)
                     if let resultUrl = shareOutputUrlText {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundColor(.green)
@@ -305,20 +386,39 @@ public struct RouteShareView: View {
                                 .foregroundColor(.primary)
                                 .padding(8)
                                 .background(Color(UIColor.secondarySystemBackground))
-                                .cornerRadius(6)
+                                .cornerRadius(8)
 
-                            Button(action: {
-                                UIPasteboard.general.string = resultUrl
-                                session.toastMessage = "已重新複製連結至剪貼簿！"
-                            }) {
-                                HStack {
-                                    Spacer()
-                                    Image(systemName: "doc.on.doc")
-                                    Text("再次複製網址")
-                                        .font(.caption)
-                                        .fontWeight(.bold)
-                                    Spacer()
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    UIPasteboard.general.string = resultUrl
+                                    session.showToast("已複製分享文案與下載連結！")
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "doc.on.doc")
+                                        Text("一鍵複製文字")
+                                            .font(.system(size: 12, weight: .bold))
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Color.green)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(8)
                                 }
+                                .buttonStyle(BorderlessButtonStyle())
+
+                                Button(action: shareResultText) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "square.and.arrow.up")
+                                        Text("轉傳到 LINE / 聊天")
+                                            .font(.system(size: 12, weight: .bold))
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(8)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
                             }
                         }
                         .padding(.vertical, 4)
@@ -330,16 +430,106 @@ public struct RouteShareView: View {
                             .foregroundColor(.red)
                     }
                 }
+
+                // 7. 本機匯出與發送動作區 (對齊 Android 卡片 6)
+                Section(header: Text("本機匯出與動作")) {
+                    // 1. 儲存/傳送選定 GPX
+                    Button(action: exportAndShareSingleGpx) {
+                        HStack {
+                            Image(systemName: "square.and.arrow.up")
+                            Text(isCalculating ? "路徑計算中 (\(Int(calculationProgress * 100))%)..." : "傳送 / 儲存此格式 (.gpx)")
+                                .fontWeight(.bold)
+                        }
+                    }
+                    .disabled(isCalculating || currentPoints.isEmpty)
+
+                    // 2. 一鍵打包全格式 ZIP 懶人包
+                    Button(action: exportAndShareZip) {
+                        HStack {
+                            Image(systemName: "doc.zipper")
+                            Text(isCalculating ? "路徑計算中 (\(Int(calculationProgress * 100))%)..." : "打包全格式 ZIP 傳送 / 儲存 (.zip)")
+                                .fontWeight(.bold)
+                                .foregroundColor(.green)
+                        }
+                    }
+                    .disabled(isCalculating || currentPoints.isEmpty)
+
+                    // 3. 複製純座標文字
+                    Button(action: copyCoordinatesText) {
+                        HStack {
+                            Image(systemName: "doc.on.doc")
+                            Text(isCalculating ? "路徑計算中 (\(Int(calculationProgress * 100))%)..." : "複製純座標文字 (可貼記事本/LINE)")
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    .disabled(isCalculating || currentPoints.isEmpty)
+                }
             }
-            .navigationTitle("路線分享與雲端")
+            .navigationTitle("路線分享與格式轉換")
             .navigationBarItems(trailing: Button("完成") { dismiss() })
             .onAppear {
                 if customFileName.isEmpty {
                     customFileName = session.activeRouteName == "無路線" ? "" : session.activeRouteName
                 }
-                // 預設若有生成之擴展點位，選定實際巡航軌跡
                 if !session.routePoints.isEmpty {
                     selectedSourceIndex = 0
+                }
+                recalculateRoute()
+            }
+        }
+    }
+
+    // MARK: - 背景非同步計算路線點位 (對齊 Android 避免 ANR 與畫面掉幀)
+    private func recalculateRoute() {
+        let baseRaw = baseRawPoints
+        guard !baseRaw.isEmpty else {
+            self.currentPoints = []
+            return
+        }
+
+        calculationTask?.cancel()
+        isCalculating = true
+        calculationProgress = 0.0
+        calculationStatus = "準備處理..."
+
+        let reversed = isReversed
+        let smartBypass = enableSmartBypass
+        let densify = enableDensify
+
+        calculationTask = Task.detached(priority: .userInitiated) {
+            let base = reversed ? baseRaw.reversed() : baseRaw
+            let processed: [RouteNode]
+
+            if smartBypass && !base.isEmpty {
+                processed = RouteShareManager.processSmartRoute(
+                    points: base,
+                    minStep: 100.0,
+                    maxStep: 150.0,
+                    densify: densify,
+                    attemptReorder: true
+                ) { p, msg in
+                    Task { @MainActor in
+                        self.calculationProgress = p
+                        self.calculationStatus = msg
+                    }
+                }
+            } else if densify && !base.isEmpty {
+                Task { @MainActor in
+                    self.calculationProgress = 0.5
+                    self.calculationStatus = "正在套用碎步插點..."
+                }
+                processed = EngineMath.densifyRoute(points: base)
+            } else {
+                processed = base
+            }
+
+            if !Task.isCancelled {
+                await MainActor.run {
+                    self.currentPoints = processed
+                    self.calculationProgress = 1.0
+                    self.calculationStatus = "完成"
+                    self.isCalculating = false
                 }
             }
         }
@@ -358,6 +548,29 @@ public struct RouteShareView: View {
         } catch {
             errorMessage = "寫入檔案失敗: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - 打包全格式 ZIP 並本機分享
+    private func exportAndShareZip() {
+        let pts = targetPoints
+        guard !pts.isEmpty else { return }
+        let zipData = RouteShareManager.generateAllFormatsZip(points: pts, routeName: exportBaseName)
+        RouteShareManager.shareZipFile(data: zipData, routeName: exportBaseName)
+    }
+
+    // MARK: - 複製純座標文字至剪貼簿
+    private func copyCoordinatesText() {
+        let pts = targetPoints
+        guard !pts.isEmpty else { return }
+        let coordsText = pts.map { "\(String(format: "%.6f", $0.lat)), \(String(format: "%.6f", $0.lng))" }.joined(separator: "\n")
+        UIPasteboard.general.string = coordsText
+        session.showToast("已複製 \(pts.count) 個座標文字！")
+    }
+
+    // MARK: - 轉傳雲端結果文案
+    private func shareResultText() {
+        guard let text = shareOutputUrlText else { return }
+        RouteShareManager.shareItems([text])
     }
 
     // MARK: - 產生 ZIP 全格式懶人包並上傳 Gofile
@@ -397,7 +610,7 @@ public struct RouteShareView: View {
                     let resultMsg = "【\(name)】路線全格式懶人包 (ZIP) 已上傳！\n專屬下載網址：\n\(response.downloadPage)\n\n(內含 5 種主流飛人 GPX 與 AutoFarm 原生格式)"
                     self.shareOutputUrlText = resultMsg
                     UIPasteboard.general.string = response.downloadPage
-                    session.toastMessage = "上傳成功！已複製下載網址"
+                    session.showToast("上傳成功！已複製下載網址")
                 }
             } catch {
                 await MainActor.run {
@@ -467,7 +680,7 @@ public struct RouteShareView: View {
                         let resultMsg = "【\(name)】5 種飛人專用格式已全數上傳至同一個資料夾！\n\n整合資料夾下載網址：\n\(finalUrl)\n\n(點開網址即可直接下載以下 5 種格式：\n• JoyStick TRK / AnyTo TRK / iTools WPT / Flashman WPT / FakeGPS WPT)"
                         self.shareOutputUrlText = resultMsg
                         UIPasteboard.general.string = finalUrl
-                        session.toastMessage = "已將 5 份格式成功放入同資料夾！"
+                        session.showToast("已將 5 份格式成功放入同資料夾！")
                     } else {
                         self.errorMessage = "未能上傳任何格式"
                     }

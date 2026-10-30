@@ -245,6 +245,34 @@ public final class RouteShareManager {
         presenter?.present(activityVC, animated: true)
     }
 
+    public static func shareItems(_ items: [Any], from viewController: UIViewController? = nil) {
+        let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let presenter = viewController ?? UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }?
+            .rootViewController
+
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = presenter?.view
+            popover.sourceRect = CGRect(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        presenter?.present(activityVC, animated: true)
+    }
+
+    public static func shareZipFile(data: Data, routeName: String) {
+        let cleanName = routeName.replacingOccurrences(of: ".zip", with: "")
+        let fileName = "\(cleanName)_全格式懶人包.zip"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: tempURL)
+            shareFile(fileURL: tempURL)
+        } catch {
+            print("Failed to save zip file: \(error)")
+        }
+    }
+
     // MARK: - Gofile 雲端上傳 (支援 Account Token、FolderId 與訪客上傳)
     public static func uploadToGofile(
         fileName: String,
@@ -322,65 +350,147 @@ public final class RouteShareManager {
         }
     }
 
-    // MARK: - 收果安全繞路避障演算 (100% 對齊安卓版 processSmartRoute，50m 核心禁區避障)
-    public static func processSmartRoute(
-        points: [RouteNode],
-        minStep: Double = 100.0,
-        maxStep: Double = 150.0,
-        densify: Bool = true,
-        attemptReorder: Bool = true,
-        onProgress: ((Float, String) -> Void)? = nil
-    ) -> [RouteNode] {
-        guard points.count >= 2 else { return points }
-        onProgress?(0.05, "初始化空間幾何點位...")
+    // MARK: - 幾何線段垂足碰撞公式
+    public static func getSegmentDistance(latA: Double, lonA: Double, latB: Double, lonB: Double, latC: Double, lonC: Double) -> Double {
+        let r = 6378137.0
+        let latMid = ((latA + latB) / 2.0) * .pi / 180.0
+        let dxB = (lonB - lonA) * .pi / 180.0 * cos(latMid) * r
+        let dyB = (latB - latA) * .pi / 180.0 * r
+        let dxC = (lonC - lonA) * .pi / 180.0 * cos(latMid) * r
+        let dyC = (latC - latA) * .pi / 180.0 * r
+        let l2 = dxB * dxB + dyB * dyB
+        if l2 == 0.0 { return EngineMath.getDistance(lat1: latA, lon1: lonA, lat2: latC, lon2: lonC) }
+        let t = max(0.0, min(1.0, (dxC * dxB + dyC * dyB) / l2))
+        return hypot(dxC - t * dxB, dyC - t * dyB)
+    }
 
-        // 空間網格去重
-        var validNodes: [RouteNode] = []
-        for p in points {
-            if p.lat.isNaN || p.lng.isNaN || p.lat < -90.0 || p.lat > 90.0 || p.lng < -180.0 || p.lng > 180.0 { continue }
-            if let last = validNodes.last {
-                if EngineMath.getDistance(lat1: last.lat, lon1: last.lng, lat2: p.lat, lon2: p.lng) < 2.0 { continue }
-            }
-            validNodes.append(p)
+    // MARK: - 圖論節點與資料結構 (100% 移植自 Android RouteShareUtils)
+    final class InternalNode {
+        let lat: Double
+        let lon: Double
+        var penalty: Int
+        var id: Int
+        var circleIdx: Int
+
+        init(lat: Double, lon: Double, penalty: Int = 0, id: Int = 0, circleIdx: Int = 0) {
+            self.lat = lat
+            self.lon = lon
+            self.penalty = penalty
+            self.id = id
+            self.circleIdx = circleIdx
+        }
+    }
+
+    struct Edge {
+        let to: Int
+        let weight: Double
+        let edgeV: Int
+    }
+
+    struct HeapNode: Comparable {
+        let id: Int
+        let d: Double
+
+        static func < (lhs: HeapNode, rhs: HeapNode) -> Bool {
+            return lhs.d < rhs.d
+        }
+    }
+
+    final class BinaryMinHeap<T: Comparable> {
+        private var elements: [T] = []
+
+        var isEmpty: Bool { elements.isEmpty }
+        var count: Int { elements.count }
+
+        func push(_ item: T) {
+            elements.append(item)
+            siftUp(elements.count - 1)
         }
 
-        guard validNodes.count >= 2 else { return points }
+        func pop() -> T? {
+            guard !elements.isEmpty else { return nil }
+            if elements.count == 1 { return elements.removeLast() }
+            let root = elements[0]
+            elements[0] = elements.removeLast()
+            siftDown(0)
+            return root
+        }
 
-        // 依據 TSP 2-opt 拓撲優化排序 (若允許)
-        let baseNodes = attemptReorder ? reorderPoints(points: validNodes) : validNodes
-        onProgress?(0.25, "建立 50m 避障弧度採樣...")
-
-        // 沿外圍 60~70m 平滑穿梭避開 50m 禁區核心
-        var smartPath: [RouteNode] = []
-        let n = baseNodes.count
-
-        for i in 0..<n {
-            let center = baseNodes[i]
-            smartPath.append(center)
-
-            if i < n - 1 {
-                let next = baseNodes[i + 1]
-                let dist = EngineMath.getDistance(lat1: center.lat, lon1: center.lng, lat2: next.lat, lon2: next.lng)
-
-                // 若相鄰花點小於 100m，插入外圍 60m 繞行弧度點
-                if dist > 50.0 && dist < 140.0 {
-                    let bearing = EngineMath.getBearing(lat1: center.lat, lon1: center.lng, lat2: next.lat, lon2: next.lng)
-                    // 左側或右側外圍弧度
-                    let detourBearing = (bearing + 60.0).truncatingRemainder(dividingBy: 360.0)
-                    let detourLoc = EngineMath.moveLocation(lat: center.lat, lng: center.lng, distanceMeters: 62.0, bearingDegrees: detourBearing)
-                    smartPath.append(RouteNode(lat: detourLoc.lat, lng: detourLoc.lng))
+        private func siftUp(_ index: Int) {
+            var child = index
+            while child > 0 {
+                let parent = (child - 1) / 2
+                if elements[child] < elements[parent] {
+                    elements.swapAt(child, parent)
+                    child = parent
+                } else {
+                    break
                 }
             }
         }
 
-        // 若啟用碎步插點
-        if densify {
-            onProgress?(0.90, "套用隨機步行碎步插點...")
-            smartPath = EngineMath.densifyRoute(points: smartPath, minStep: minStep, maxStep: maxStep)
+        private func siftDown(_ index: Int) {
+            var parent = index
+            let count = elements.count
+            while true {
+                let left = 2 * parent + 1
+                let right = 2 * parent + 2
+                var candidate = parent
+
+                if left < count && elements[left] < elements[candidate] {
+                    candidate = left
+                }
+                if right < count && elements[right] < elements[candidate] {
+                    candidate = right
+                }
+                if candidate != parent {
+                    elements.swapAt(parent, candidate)
+                    parent = candidate
+                } else {
+                    break
+                }
+            }
+        }
+    }
+
+    final class SpatialGrid {
+        let cellSize: Double
+        var cells: [String: [InternalNode]] = [:]
+        var allPoints: [InternalNode] = []
+
+        init(cellSize: Double = 0.001) {
+            self.cellSize = cellSize
         }
 
-        onProgress?(1.0, "計算完成")
-        return smartPath
+        func insert(_ p: InternalNode) {
+            allPoints.append(p)
+            let x = Int(floor(p.lat / cellSize))
+            let y = Int(floor(p.lon / cellSize))
+            let key = "\(x),\(y)"
+            cells[key, default: []].append(p)
+        }
+
+        func getPointsInBounds(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) -> [InternalNode] {
+            let minX = Int(floor(minLat / cellSize))
+            let maxX = Int(floor(maxLat / cellSize))
+            let minY = Int(floor(minLon / cellSize))
+            let maxY = Int(floor(maxLon / cellSize))
+            let area = (maxX - minX + 1) * (maxY - minY + 1)
+
+            if area > 100 || area < 0 {
+                return allPoints.filter { $0.lat >= minLat && $0.lat <= maxLat && $0.lon >= minLon && $0.lon <= maxLon }
+            }
+
+            var result: [InternalNode] = []
+            for x in minX...maxX {
+                for y in minY...maxY {
+                    if let bucket = cells["\(x),\(y)"] {
+                        result.append(contentsOf: bucket)
+                    }
+                }
+            }
+            return result
+        }
     }
 
     // MARK: - 2-opt 最短巡迴拓撲排序
@@ -416,7 +526,304 @@ public final class RouteShareManager {
             }
         }
 
+        var improved = true
+        var iterations = 0
+        let maxIters = n > 300 ? 2 : 5
+        while improved && iterations < maxIters {
+            improved = false
+            iterations += 1
+            for i in 0..<(n - 2) {
+                let windowEnd = min(n - 1, i + 50)
+                if (i + 2) >= windowEnd { continue }
+                for j in (i + 2)..<windowEnd {
+                    let d1 = EngineMath.getDistance(lat1: path[i].lat, lon1: path[i].lng, lat2: path[i + 1].lat, lon2: path[i + 1].lng)
+                    let d2 = EngineMath.getDistance(lat1: path[j].lat, lon1: path[j].lng, lat2: path[j + 1].lat, lon2: path[j + 1].lng)
+                    let d3 = EngineMath.getDistance(lat1: path[i].lat, lon1: path[i].lng, lat2: path[j].lat, lon2: path[j].lng)
+                    let d4 = EngineMath.getDistance(lat1: path[i + 1].lat, lon1: path[i + 1].lng, lat2: path[j + 1].lat, lon2: path[j + 1].lng)
+
+                    if d1 + d2 > d3 + d4 {
+                        var start = i + 1
+                        var end = j
+                        while start < end {
+                            let temp = path[start]
+                            path[start] = path[end]
+                            path[end] = temp
+                            start += 1
+                            end -= 1
+                        }
+                        improved = true
+                    }
+                }
+            }
+        }
         return path
+    }
+
+    private static func generateSmartPoints(
+        pts: [InternalNode],
+        allowViolation: Bool,
+        grid: SpatialGrid,
+        onProgress: ((Float, String) -> Void)? = nil
+    ) -> [RouteNode] {
+        let n = pts.count
+        guard n > 0 else { return [] }
+
+        var allNodes: [InternalNode] = []
+        var circleNodes: [[InternalNode]] = Array(repeating: [], count: n)
+        var nodeId = 0
+
+        // 1. 空間採樣圓周點 (每 15 度採樣一個候選點，共 24 個方位)
+        for i in 0..<n {
+            let center = pts[i]
+            let cosLat = cos(center.lat * .pi / 180.0)
+            let lonOffset = cosLat > 1e-6 ? 0.001 / cosLat : 180.0
+
+            for a in stride(from: 0, to: 360, by: 15) {
+                var testDist = 60.0 + Double.random(in: 0.0...10.0)
+                var pt: (lat: Double, lng: Double) = (0.0, 0.0)
+                var isSafe = true
+
+                while testDist > 50.0 {
+                    let dest = EngineMath.moveLocation(lat: center.lat, lng: center.lon, distanceMeters: testDist, bearingDegrees: Double(a))
+                    pt = (dest.lat, dest.lng)
+                    isSafe = true
+                    let nearbyPoints = grid.getPointsInBounds(
+                        minLat: pt.lat - 0.001,
+                        maxLat: pt.lat + 0.001,
+                        minLon: pt.lng - abs(lonOffset),
+                        maxLon: pt.lng + abs(lonOffset)
+                    )
+                    for p2 in nearbyPoints {
+                        if EngineMath.getDistance(lat1: pt.lat, lon1: pt.lng, lat2: p2.lat, lon2: p2.lon) < 50.0 {
+                            isSafe = false
+                            break
+                        }
+                    }
+                    if isSafe { break }
+                    testDist -= 1.0
+                }
+
+                if isSafe || allowViolation {
+                    let node = InternalNode(lat: pt.lat, lon: pt.lng, penalty: isSafe ? 0 : 1, id: nodeId, circleIdx: i)
+                    nodeId += 1
+                    allNodes.append(node)
+                    circleNodes[i].append(node)
+                }
+            }
+
+            if allowViolation && circleNodes[i].isEmpty {
+                let node = InternalNode(lat: center.lat, lon: center.lon, penalty: 2, id: nodeId, circleIdx: i)
+                nodeId += 1
+                allNodes.append(node)
+                circleNodes[i].append(node)
+            }
+        }
+
+        onProgress?(0.15, "建立避障路徑圖 (15%)...")
+
+        // 2. 建立避障圖論邊緣 (Adjacency List)
+        var adj: [[Edge]] = Array(repeating: [], count: allNodes.count)
+
+        for c1 in 0..<n {
+            if c1 % 3 == 0 || c1 == n - 1 {
+                let p = 0.15 + (Float(c1) / Float(n)) * 0.65
+                onProgress?(p, "建立避障路徑圖 (\(Int(p * 100))%)...")
+            }
+
+            let maxLayer = min(n - 1, c1 + 8)
+            for u in circleNodes[c1] {
+                for c2 in c1...maxLayer {
+                    for v in circleNodes[c2] {
+                        if c1 == c2 && u.id >= v.id { continue }
+                        let maxLatRad = max(abs(u.lat), abs(v.lat)) * .pi / 180.0
+                        let cosVal = max(1e-6, cos(maxLatRad))
+                        let dynLonOffset = 0.0007 / cosVal
+                        let minLat = min(u.lat, v.lat) - 0.0007
+                        let maxLat = max(u.lat, v.lat) + 0.0007
+                        let minLon = min(u.lon, v.lon) - abs(dynLonOffset)
+                        let maxLon = max(u.lon, v.lon) + abs(dynLonOffset)
+
+                        var edgeViolations = 0
+                        let candidateObstacles = grid.getPointsInBounds(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
+                        for p in candidateObstacles {
+                            if getSegmentDistance(latA: u.lat, lonA: u.lon, latB: v.lat, lonB: v.lon, latC: p.lat, lonC: p.lon) < 50.0 {
+                                edgeViolations += 1
+                                if edgeViolations >= 3 { break }
+                            }
+                        }
+
+                        if edgeViolations == 0 || allowViolation {
+                            let d = EngineMath.getDistance(lat1: u.lat, lon1: u.lon, lat2: v.lat, lon2: v.lon)
+                            let weightU = d + Double(u.penalty + v.penalty + edgeViolations) * 100000.0
+                            adj[u.id].append(Edge(to: v.id, weight: weightU, edgeV: edgeViolations))
+                            adj[v.id].append(Edge(to: u.id, weight: weightU, edgeV: edgeViolations))
+                        }
+                    }
+                }
+            }
+        }
+
+        onProgress?(0.80, "搜尋最佳平滑繞路 (80%)...")
+
+        // 3. 分層 Dijkstra 最短路徑搜尋
+        var globalPath: [RouteNode] = []
+        var startCircleIdx = -1
+        for i in 0..<n {
+            if !circleNodes[i].isEmpty {
+                startCircleIdx = i
+                break
+            }
+        }
+        guard startCircleIdx != -1 else { return [] }
+
+        var currId = circleNodes[startCircleIdx][0].id
+        globalPath.append(RouteNode(lat: allNodes[currId].lat, lng: allNodes[currId].lon))
+        var lastReachedLayer = startCircleIdx
+
+        var dist = Array(repeating: Double.infinity, count: allNodes.count)
+        var prev = Array(repeating: -1, count: allNodes.count)
+
+        for targetLayer in (startCircleIdx + 1)..<n {
+            if circleNodes[targetLayer].isEmpty { continue }
+            dist = Array(repeating: Double.infinity, count: allNodes.count)
+            prev = Array(repeating: -1, count: allNodes.count)
+            dist[currId] = 0.0
+
+            let pq = BinaryMinHeap<HeapNode>()
+            pq.push(HeapNode(id: currId, d: 0.0))
+            var foundTargetId = -1
+
+            while let top = pq.pop() {
+                if allNodes[top.id].circleIdx == targetLayer {
+                    foundTargetId = top.id
+                    break
+                }
+                if top.d > dist[top.id] { continue }
+
+                for edge in adj[top.id] {
+                    let vNode = allNodes[edge.to]
+                    if vNode.circleIdx < allNodes[currId].circleIdx - 3 || vNode.circleIdx > targetLayer + 4 { continue }
+                    let newDist = top.d + edge.weight
+                    if newDist < dist[edge.to] {
+                        dist[edge.to] = newDist
+                        prev[edge.to] = top.id
+                        pq.push(HeapNode(id: edge.to, d: newDist))
+                    }
+                }
+            }
+
+            if foundTargetId != -1 {
+                var pathSegment: [RouteNode] = []
+                var step = foundTargetId
+                var safeSteps = allNodes.count
+                while step != currId && safeSteps > 0 {
+                    safeSteps -= 1
+                    pathSegment.append(RouteNode(lat: allNodes[step].lat, lng: allNodes[step].lon))
+                    if prev[step] < 0 || prev[step] >= allNodes.count { break }
+                    step = prev[step]
+                }
+                pathSegment.reverse()
+                globalPath.append(contentsOf: pathSegment)
+                currId = foundTargetId
+                lastReachedLayer = targetLayer
+            } else {
+                break
+            }
+
+            let p = 0.80 + (Float(targetLayer - startCircleIdx) / Float(n - startCircleIdx)) * 0.15
+            onProgress?(p, "搜尋最佳平滑繞路 (\(Int(p * 100))%)...")
+        }
+
+        var lastHasNodesLayer = n - 1
+        while lastHasNodesLayer >= 0 && circleNodes[lastHasNodesLayer].isEmpty {
+            lastHasNodesLayer -= 1
+        }
+
+        if lastReachedLayer == lastHasNodesLayer {
+            return globalPath
+        }
+        return []
+    }
+
+    // MARK: - gpxshare 核心收果繞路演算法 (100% 對齊安卓版 processSmartRoute，50m 核心禁區避障)
+    public static func processSmartRoute(
+        points: [RouteNode],
+        minStep: Double = 100.0,
+        maxStep: Double = 150.0,
+        densify: Bool = true,
+        attemptReorder: Bool = true,
+        onProgress: ((Float, String) -> Void)? = nil
+    ) -> [RouteNode] {
+        onProgress?(0.05, "初始化空間幾何座標...")
+        var pts: [InternalNode] = []
+        let grid = SpatialGrid()
+
+        for p in points {
+            if p.lat.isNaN || p.lng.isNaN || p.lat.isInfinite || p.lng.isInfinite { continue }
+            if p.lat < -90.0 || p.lat > 90.0 || p.lng < -180.0 || p.lng > 180.0 { continue }
+
+            if let lastPt = pts.last {
+                if EngineMath.getDistance(lat1: lastPt.lat, lon1: lastPt.lon, lat2: p.lat, lon2: p.lng) < 2.0 {
+                    continue
+                }
+            }
+            let node = InternalNode(lat: p.lat, lon: p.lng)
+            pts.append(node)
+            grid.insert(node)
+        }
+
+        guard !pts.isEmpty else {
+            onProgress?(1.0, "路線為空")
+            return []
+        }
+
+        // 嘗試 1：常規嚴格避障計算
+        var resultPath = generateSmartPoints(pts: pts, allowViolation: false, grid: grid, onProgress: onProgress)
+
+        // 嘗試 2：若找不到路徑且允許重新排序，則重新排序後再算一次
+        if resultPath.isEmpty && attemptReorder {
+            onProgress?(0.2, "重新規劃節點拓撲排序...")
+            let reorderedNodes = reorderPoints(points: points)
+            var reorderedInternal: [InternalNode] = []
+            let reorderedGrid = SpatialGrid()
+            for p in reorderedNodes {
+                let node = InternalNode(lat: p.lat, lon: p.lng)
+                reorderedInternal.append(node)
+                reorderedGrid.insert(node)
+            }
+            resultPath = generateSmartPoints(pts: reorderedInternal, allowViolation: false, grid: reorderedGrid, onProgress: onProgress)
+        }
+
+        // 嘗試 3：若仍無解，開啟最小穿透容許 (allowViolation = true)
+        if resultPath.isEmpty {
+            onProgress?(0.4, "計算進入最少禁區之平滑路線...")
+            resultPath = generateSmartPoints(pts: pts, allowViolation: true, grid: grid, onProgress: onProgress)
+        }
+
+        // 嘗試 4：若仍無解，重新排序後開啟最小穿透容許
+        if resultPath.isEmpty && attemptReorder {
+            let reorderedNodes = reorderPoints(points: points)
+            var reorderedInternal: [InternalNode] = []
+            let reorderedGrid = SpatialGrid()
+            for p in reorderedNodes {
+                let node = InternalNode(lat: p.lat, lon: p.lng)
+                reorderedInternal.append(node)
+                reorderedGrid.insert(node)
+            }
+            resultPath = generateSmartPoints(pts: reorderedInternal, allowViolation: true, grid: reorderedGrid, onProgress: onProgress)
+        }
+
+        if resultPath.isEmpty {
+            resultPath = points
+        }
+
+        if densify && !resultPath.isEmpty {
+            onProgress?(0.96, "正在套用隨機碎步插點...")
+            resultPath = EngineMath.densifyRoute(points: resultPath, minStep: minStep, maxStep: maxStep)
+        }
+
+        onProgress?(1.0, "計算完成")
+        return resultPath
     }
 
     private static func escapeXml(_ str: String) -> String {

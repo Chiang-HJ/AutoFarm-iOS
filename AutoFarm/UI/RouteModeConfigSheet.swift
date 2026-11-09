@@ -78,11 +78,17 @@ public struct RouteModeConfigSheet: View {
             .navigationBarItems(leading: Button("取消") { dismiss() })
             .onAppear(perform: loadSavedPreferences)
             .sheet(isPresented: $isPreFlightPlantingPresented) {
-                if let flowerCfg = pendingFlowerConfig {
-                    PreFlightPlantingSheet(route: route, flowerSettings: flowerCfg) {
-                        onStart(1, linearLoopMode, 0, flowerCfg, fruitWalkDistance)
-                        dismiss()
-                    }
+                let flowerCfg = pendingFlowerConfig ?? MultiFlowerSettings(
+                    flowerTeleport: flowerTeleport,
+                    enableCircle2: enableCircle2,
+                    flowerJitter: flowerJitter,
+                    flowerAlternate: flowerAlternate,
+                    circle1: FlowerCircleParam(radius: circle1Radius, loops: circle1Loops, waitBeforeSec: circle1WaitBefore, waitAfterSec: circle1WaitAfter),
+                    circle2: FlowerCircleParam(radius: circle2Radius, loops: circle2Loops, waitBeforeSec: circle2WaitBefore, waitAfterSec: circle2WaitAfter)
+                )
+                PreFlightPlantingSheet(route: route, flowerSettings: flowerCfg) {
+                    onStart(1, linearLoopMode, 0, flowerCfg, fruitWalkDistance)
+                    dismiss()
                 }
             }
         }

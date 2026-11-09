@@ -447,6 +447,18 @@ public struct DatabaseSheet: View {
                             }
                             .buttonStyle(BorderlessButtonStyle())
                         }
+                        .contextMenu {
+                            Button(action: {
+                                if let url = db.exportRouteToGPX(route: route) {
+                                    backupShareUrl = url
+                                    isShareBackupPresented = true
+                                } else {
+                                    session.toastMessage = "匯出 GPX 失敗"
+                                }
+                            }) {
+                                Label("匯出此路線 (GPX)", systemImage: "square.and.arrow.up")
+                            }
+                        }
                     }
                     .onDelete { indexSet in
                         for i in indexSet {

@@ -70,11 +70,23 @@ public struct ControlDrawerView: View {
     @State private var exportBackupURL: URL? = nil
     @State private var isExportSharePresented: Bool = false
 
-    // 搜尋與排序 (預設以最近使用優先排序)
+    // 搜尋與排序 (預設以最近使用優先排序，持久化記憶)
     @State private var locationSearchText: String = ""
     @State private var routeSearchText: String = ""
-    @State private var locationSortMode: DatabaseSortMode = .recentlyUsed
-    @State private var routeSortMode: DatabaseSortMode = .recentlyUsed
+    @State private var locationSortMode: DatabaseSortMode = {
+        if let raw = UserDefaults.standard.string(forKey: "Drawer_LocationSortMode"),
+           let mode = DatabaseSortMode(rawValue: raw) {
+            return mode
+        }
+        return .recentlyUsed
+    }()
+    @State private var routeSortMode: DatabaseSortMode = {
+        if let raw = UserDefaults.standard.string(forKey: "Drawer_RouteSortMode"),
+           let mode = DatabaseSortMode(rawValue: raw) {
+            return mode
+        }
+        return .recentlyUsed
+    }()
 
     // 重新命名
     @State private var isRenamePresented: Bool = false
@@ -252,51 +264,11 @@ public struct ControlDrawerView: View {
 
 
     private var displayedLocations: [SavedLocation] {
-        var list = db.savedLocations
-        let q = locationSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !q.isEmpty {
-            list = list.filter {
-                $0.name.lowercased().contains(q) || $0.tag.lowercased().contains(q) || $0.note.lowercased().contains(q)
-            }
-        }
-        switch locationSortMode {
-        case .recentlyUsed:
-            return list.sorted { ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt) }
-        case .nameAsc:
-            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        case .nameDesc:
-            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
-        case .timeDesc:
-            return list.sorted { $0.createdAt > $1.createdAt }
-        case .timeAsc:
-            return list.sorted { $0.createdAt < $1.createdAt }
-        case .pinFirst:
-            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
-        }
+        db.filteredLocations(query: locationSearchText, sortMode: locationSortMode)
     }
 
     private var displayedRoutes: [SavedRoute] {
-        var list = db.savedRoutes
-        let q = routeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !q.isEmpty {
-            list = list.filter {
-                $0.name.lowercased().contains(q) || $0.tag.lowercased().contains(q) || $0.note.lowercased().contains(q)
-            }
-        }
-        switch routeSortMode {
-        case .recentlyUsed:
-            return list.sorted { ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt) }
-        case .nameAsc:
-            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        case .nameDesc:
-            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
-        case .timeDesc:
-            return list.sorted { $0.createdAt > $1.createdAt }
-        case .timeAsc:
-            return list.sorted { $0.createdAt < $1.createdAt }
-        case .pinFirst:
-            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
-        }
+        db.filteredRoutes(query: routeSearchText, sortMode: routeSortMode)
     }
 
     // MARK: - 抽屜頂部把手與標題列
@@ -830,47 +802,6 @@ public struct ControlDrawerView: View {
             }
             .padding(.horizontal, 16)
 
-            // 全庫備份與還原列 (相容 APK / IPA)
-            HStack(spacing: 8) {
-                Button(action: {
-                    hideKeyboard()
-                    if let url = db.exportFullBackup() {
-                        exportBackupURL = url
-                        isExportSharePresented = true
-                    } else {
-                        session.showToast("匯出備份失敗", isError: true)
-                    }
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.up")
-                        Text("匯出全庫 (JSON)")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .foregroundColor(.primary)
-                    .cornerRadius(8)
-                }
-
-                Button(action: {
-                    hideKeyboard()
-                    isBackupImporterPresented = true
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.down")
-                        Text("匯入備份 (相容APK)")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .foregroundColor(.primary)
-                    .cornerRadius(8)
-                }
-            }
-            .padding(.horizontal, 16)
-
             // 搜尋與排序列
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
@@ -894,7 +825,10 @@ public struct ControlDrawerView: View {
 
                 Menu {
                     ForEach(DatabaseSortMode.allCases) { mode in
-                        Button(mode.rawValue) { locationSortMode = mode }
+                        Button(mode.rawValue) {
+                            locationSortMode = mode
+                            UserDefaults.standard.set(mode.rawValue, forKey: "Drawer_LocationSortMode")
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -1030,26 +964,8 @@ public struct ControlDrawerView: View {
     // MARK: - 路徑庫視圖 (支援置頂、標籤、點擊智慧詢問暫存進度)
     private var routesSection: some View {
         VStack(spacing: 6) {
-            // 檔案與文字匯入列
+            // 貼上座標匯入列 (檔案匯入集中於資料庫視窗)
             HStack(spacing: 8) {
-                // 1. 匯入檔案 (GPX / CSV / TXT)
-                Button(action: {
-                    hideKeyboard()
-                    isFileImporterPresented = true
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.down.fill")
-                        Text("匯入檔案 (GPX/CSV/TXT)")
-                            .font(.system(size: 12, weight: .bold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(Color.purple)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-
-                // 2. 貼上文字匯入
                 Button(action: {
                     hideKeyboard()
                     pasteRouteName = ""
@@ -1062,7 +978,7 @@ public struct ControlDrawerView: View {
                         Text("貼上座標匯入")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
                     .background(Color.blue)
                     .foregroundColor(.white)
@@ -1094,7 +1010,10 @@ public struct ControlDrawerView: View {
 
                 Menu {
                     ForEach(DatabaseSortMode.allCases) { mode in
-                        Button(mode.rawValue) { routeSortMode = mode }
+                        Button(mode.rawValue) {
+                            routeSortMode = mode
+                            UserDefaults.standard.set(mode.rawValue, forKey: "Drawer_RouteSortMode")
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -1250,6 +1169,19 @@ public struct ControlDrawerView: View {
                             .padding(.vertical, 7)
                             .background(route.isPinned ? Color.purple.opacity(0.08) : Color(UIColor.secondarySystemBackground).opacity(0.6))
                             .cornerRadius(10)
+                            .contextMenu {
+                                Button(action: {
+                                    hideKeyboard()
+                                    if let url = db.exportRouteToGPX(route: route) {
+                                        exportBackupURL = url
+                                        isExportSharePresented = true
+                                    } else {
+                                        session.showToast("匯出 GPX 失敗", isError: true)
+                                    }
+                                }) {
+                                    Label("匯出此路線 (GPX)", systemImage: "square.and.arrow.up")
+                                }
+                            }
                         }
                     }
                 }

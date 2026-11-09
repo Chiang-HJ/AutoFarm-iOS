@@ -267,7 +267,15 @@ public final class SavedDatabaseStore: ObservableObject {
         return list.sorted { a, b in
             switch sortMode {
             case .recentlyUsed:
-                return (a.lastUsedAt ?? a.createdAt) > (b.lastUsedAt ?? b.createdAt)
+                let aUsed = a.lastUsedAt != nil
+                let bUsed = b.lastUsedAt != nil
+                if aUsed != bUsed {
+                    return aUsed && !bUsed
+                }
+                if let aTime = a.lastUsedAt, let bTime = b.lastUsedAt {
+                    return aTime > bTime
+                }
+                return a.createdAt > b.createdAt
             case .pinFirst:
                 if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
                 return a.createdAt > b.createdAt
@@ -296,7 +304,15 @@ public final class SavedDatabaseStore: ObservableObject {
         return list.sorted { a, b in
             switch sortMode {
             case .recentlyUsed:
-                return (a.lastUsedAt ?? a.createdAt) > (b.lastUsedAt ?? b.createdAt)
+                let aUsed = a.lastUsedAt != nil
+                let bUsed = b.lastUsedAt != nil
+                if aUsed != bUsed {
+                    return aUsed && !bUsed
+                }
+                if let aTime = a.lastUsedAt, let bTime = b.lastUsedAt {
+                    return aTime > bTime
+                }
+                return a.createdAt > b.createdAt
             case .pinFirst:
                 if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
                 return a.createdAt > b.createdAt
@@ -619,6 +635,33 @@ public final class SavedDatabaseStore: ObservableObject {
     }
 
     // MARK: - 全庫備份與還原 (JSON)
+
+    /// 將單一路線匯出為標準 GPX 檔案 (包含 <trkpt> 經緯度)，供跨平台 (Android AutoFarm) 匯入分享
+    public func exportRouteToGPX(route: SavedRoute) -> URL? {
+        var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        xml += "<gpx version=\"1.1\" creator=\"AutoFarm-iOS\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n"
+        xml += "  <trk>\n"
+        xml += "    <name>\(route.name)</name>\n"
+        xml += "    <trkseg>\n"
+        for node in route.nodes {
+            xml += "      <trkpt lat=\"\(String(format: "%.7f", node.lat))\" lon=\"\(String(format: "%.7f", node.lng))\" />\n"
+        }
+        xml += "    </trkseg>\n"
+        xml += "  </trk>\n"
+        xml += "</gpx>\n"
+
+        let safeName = route.name.components(separatedBy: CharacterSet(charactersIn: "\\/:*?\"<>|")).joined(separator: "_")
+        let fileName = "\(safeName.isEmpty ? "route" : safeName).gpx"
+        let tempUrl = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+
+        do {
+            try xml.write(to: tempUrl, atomically: true, encoding: .utf8)
+            return tempUrl
+        } catch {
+            print("[SavedDatabaseStore] Export GPX error: \(error)")
+            return nil
+        }
+    }
 
     /// 匯出全庫完整備份檔 (JSON 格式，包含座標、路線與歷史紀錄)
     public func exportFullBackup() -> URL? {

@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import CoreLocation
 import SwiftUI
+import UserNotifications
 
 // MARK: - 花田多邊形頂點坐標模型
 public struct HullPoint: Codable, Equatable {
@@ -546,13 +547,35 @@ public final class FlowerStationManager: ObservableObject {
                 }
 
                 DispatchQueue.main.async {
+                    let oldIndices = Set(self.matureFlowers.map { $0.index })
+                    let newlyMatured = mature.filter { !oldIndices.contains($0.index) }
                     self.allPoints = parsed
                     self.matureFlowers = mature
                     self.lastSyncTime = Date()
+
+                    if !newlyMatured.isEmpty {
+                        self.postMatureFruitNotification(matureList: mature)
+                    }
                     completion?(parsed)
                 }
             }.resume()
         }
+    }
+
+    /// 發送大果實成熟本機推播通知
+    public func postMatureFruitNotification(matureList: [FlowerStationPoint]) {
+        guard !matureList.isEmpty else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "花田大果實成熟通知"
+        let names = matureList.prefix(3).map { $0.name }.joined(separator: "、")
+        content.body = "目前有 \(matureList.count) 處花田大果實成熟可收取（\(names)\(matureList.count > 3 ? " 等" : "")）"
+        content.sound = nil
+        let request = UNNotificationRequest(
+            identifier: "autofarm_fruit_mature_alert",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
     private func parsePointItem(index: Int, raw: [String: Any]) -> FlowerStationPoint {

@@ -306,6 +306,7 @@ public final class AutoFarmSession: ObservableObject {
 
             self.pushCurrentLocation()
             self.ensureEngineRunning()
+            SavedDatabaseStore.shared.useRoute(name: name)
             SavedDatabaseStore.shared.addLinearRouteHistory(name: name, basePoints: basePoints, loops: loops, mode: mode)
             self.showToast("已開始路線【\(name)】")
         }
@@ -335,6 +336,7 @@ public final class AutoFarmSession: ObservableObject {
 
             self.pushCurrentLocation()
             self.ensureEngineRunning()
+            SavedDatabaseStore.shared.useRoute(name: name)
             SavedDatabaseStore.shared.addFlowerRouteHistory(name: name, basePoints: basePoints, loops: loops, settings: settings)
             self.showToast("已啟動繞圈種花 (\(self.routePoints.count) 點)")
         }
@@ -364,6 +366,7 @@ public final class AutoFarmSession: ObservableObject {
 
             self.pushCurrentLocation()
             self.ensureEngineRunning()
+            SavedDatabaseStore.shared.useRoute(name: name)
             SavedDatabaseStore.shared.addFruitRouteHistory(name: name, basePoints: basePoints, loops: loops, walkDistance: walkDistance)
             self.showToast("已啟動跳收果實模式")
         }
@@ -827,6 +830,9 @@ public final class AutoFarmSession: ObservableObject {
 
             let pointLabel = label.isEmpty ? "自訂座標" : label
             SavedDatabaseStore.shared.addTeleportHistory(lat: lat, lng: lng, label: pointLabel)
+            if let match = SavedDatabaseStore.shared.savedLocations.first(where: { abs($0.latitude - lat) < 0.0001 && abs($0.longitude - lng) < 0.0001 }) {
+                SavedDatabaseStore.shared.useLocation(id: match.id)
+            }
 
             if self.detourDepartureCoord != nil {
                 self.showToast("已瞬移至【\(pointLabel)】(路線已暫停，按繼續自動返回原位接續)")

@@ -352,6 +352,7 @@ private struct FruitFlowerCard: View {
     let onActionFinished: () -> Void
 
     @ObservedObject var session = AutoFarmSession.shared
+    @State private var customSelectedRouteName: String = ""
 
     private var hasRoute: Bool {
         !matches.isEmpty
@@ -455,32 +456,78 @@ private struct FruitFlowerCard: View {
                 .background(Color.orange.opacity(0.08))
                 .cornerRadius(8)
             } else {
-                // 具備匹配路線時的選擇與啟動 (精簡為單一最佳推薦路線)
-                if let bestMatch = matches.first(where: { $0.isHarvestRecommended }) ?? matches.first {
+                // 具備匹配路線時的選擇與啟動 (只列出單一推薦路線，支援手動更正並記憶)
+                let pref = FlowerStationManager.shared.getPreferredRouteName(for: flower.name)
+                let activeRouteName = !customSelectedRouteName.isEmpty ? customSelectedRouteName : (pref ?? (matches.first(where: { $0.isHarvestRecommended })?.route.name ?? matches.first?.route.name ?? ""))
+                let activeMatch = matches.first(where: { $0.route.name == activeRouteName }) ?? matches.first
+
+                if let currentMatch = activeMatch {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(" 推薦收果路線：")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.secondary)
+                        HStack {
+                            Text("推薦收果路線：")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Menu {
+                                Section(header: Text("更正使用路線 (自動記憶)")) {
+                                    ForEach(matches) { m in
+                                        Button(action: {
+                                            customSelectedRouteName = m.route.name
+                                            FlowerStationManager.shared.setPreferredRouteName(m.route.name, for: flower.name)
+                                            session.showToast("已更正並記住【\(flower.name)】使用路線為【\(m.route.name)】")
+                                        }) {
+                                            HStack {
+                                                Text(m.route.name)
+                                                if m.isHarvestRecommended {
+                                                    Text("（推薦）")
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Divider()
+                                    ForEach(SavedDatabaseStore.shared.savedRoutes) { r in
+                                        Button(action: {
+                                            customSelectedRouteName = r.name
+                                            FlowerStationManager.shared.setPreferredRouteName(r.name, for: flower.name)
+                                            session.showToast("已更正並記住【\(flower.name)】使用路線為【\(r.name)】")
+                                        }) {
+                                            Text(r.name)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "pencil.circle.fill")
+                                    Text("更正")
+                                }
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.12))
+                                .cornerRadius(5)
+                            }
+                        }
 
                         Button(action: {
-                            FlowerStationManager.shared.setPreferredRouteName(bestMatch.route.name, for: flower.name)
+                            FlowerStationManager.shared.setPreferredRouteName(currentMatch.route.name, for: flower.name)
                             session.startFruitRoute(
-                                name: bestMatch.route.name,
-                                basePoints: bestMatch.route.nodes,
+                                name: currentMatch.route.name,
+                                basePoints: currentMatch.route.nodes,
                                 loops: 0,
                                 walkDistance: walkDistance
                             )
-                            session.showToast("已啟動【\(bestMatch.route.name)】跳收果實 (直徑 \(Int(walkDistance))m)！")
+                            session.showToast("已啟動【\(currentMatch.route.name)】跳收果實 (直徑 \(Int(walkDistance))m)！")
                             onActionFinished()
                         }) {
                             HStack {
-                                Image(systemName: bestMatch.isHarvestRecommended ? "checkmark.circle.fill" : "play.circle")
-                                    .foregroundColor(bestMatch.isHarvestRecommended ? .green : .blue)
+                                Image(systemName: currentMatch.isHarvestRecommended ? "checkmark.circle.fill" : "play.circle")
+                                    .foregroundColor(currentMatch.isHarvestRecommended ? .green : .blue)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(bestMatch.isHarvestRecommended ? " 【推薦】" : "")\(bestMatch.route.name)")
-                                        .font(.system(size: 13, weight: bestMatch.isHarvestRecommended ? .bold : .semibold))
-                                        .foregroundColor(bestMatch.isHarvestRecommended ? .green : .primary)
-                                    Text("共 \(bestMatch.route.nodes.count) 個航點・以 \(Int(walkDistance))m 直徑收果")
+                                    Text("\(currentMatch.isHarvestRecommended ? "【推薦】" : "")\(currentMatch.route.name)")
+                                        .font(.system(size: 13, weight: currentMatch.isHarvestRecommended ? .bold : .semibold))
+                                        .foregroundColor(currentMatch.isHarvestRecommended ? .green : .primary)
+                                    Text("共 \(currentMatch.route.nodes.count) 個航點・以 \(Int(walkDistance))m 直徑收果")
                                         .font(.system(size: 10))
                                         .foregroundColor(.secondary)
                                 }
@@ -490,7 +537,7 @@ private struct FruitFlowerCard: View {
                                     .foregroundColor(.secondary)
                             }
                             .padding(10)
-                            .background(bestMatch.isHarvestRecommended ? Color.green.opacity(0.08) : Color(UIColor.secondarySystemBackground))
+                            .background(currentMatch.isHarvestRecommended ? Color.green.opacity(0.08) : Color(UIColor.secondarySystemBackground))
                             .cornerRadius(8)
                         }
                         .buttonStyle(BorderlessButtonStyle())

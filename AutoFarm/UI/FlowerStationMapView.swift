@@ -229,6 +229,7 @@ public struct FlowerStationMapView: View {
     @State private var slottingPoint: FlowerStationPoint? = nil
     @State private var inputNickname: String = ""
     @State private var inputRemark: String = ""
+    @State private var selectedRouteName: String = ""
     @State private var isSubmittingSlot: Bool = false
 
     public init() {}
@@ -245,8 +246,10 @@ public struct FlowerStationMapView: View {
                 // 3. 嵌入式地圖
                 if isMapExpanded {
                     FlowerStationMapContainer(selectedPoint: $selectedPoint) { point in
-                        self.slottingPoint = point
-                        self.isSlottingSheetPresented = true
+                        if !point.isCounting {
+                            self.slottingPoint = point
+                            self.isSlottingSheetPresented = true
+                        }
                     }
                     .frame(height: 240)
                     .transition(.opacity)
@@ -331,10 +334,10 @@ public struct FlowerStationMapView: View {
         .padding(.vertical, 6)
     }
 
-    // MARK: - 空間待命 / 冷卻中 頁籤列 (對齊附圖，僅統計印度花田)
+    // MARK: - 空間待命 / 冷卻中 頁籤列 (對齊附圖，僅統計印度花田，已卡位者不計入待命)
     private var filterTabsBar: some View {
         let indiaPoints = station.allPoints.filter { $0.name.hasPrefix("印") }
-        let idleCount = indiaPoints.filter { !$0.isCounting }.count
+        let idleCount = indiaPoints.filter { !$0.isCounting && $0.occupierUid == nil && $0.planter.isEmpty && !$0.isHidden }.count
         let coolingCount = indiaPoints.filter { $0.isCounting }.count
 
         return HStack(spacing: 12) {
@@ -372,11 +375,12 @@ public struct FlowerStationMapView: View {
         .padding(.vertical, 8)
     }
 
-    // MARK: - 花田清單 (使用者要求：僅顯示印度花田)
+    // MARK: - 花田清單 (使用者要求：僅顯示印度花田，空間待命排除被卡位花田)
     private var filteredPoints: [FlowerStationPoint] {
         var list = station.allPoints.filter { $0.name.hasPrefix("印") }
         if filterTab == 0 {
-            list = list.filter { !$0.isCounting }
+            // 空間待命：必須為非計時中，且未被任何人卡位
+            list = list.filter { !$0.isCounting && $0.occupierUid == nil && $0.planter.isEmpty && !$0.isHidden }
         } else {
             list = list.filter { $0.isCounting }
         }
@@ -407,8 +411,11 @@ public struct FlowerStationMapView: View {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         self.selectedPoint = point
-                        self.slottingPoint = point
-                        self.isSlottingSheetPresented = true
+                        // 冷卻中的花田不需要可以點開來卡位
+                        if !point.isCounting {
+                            self.slottingPoint = point
+                            self.isSlottingSheetPresented = true
+                        }
                     }
             }
         }
@@ -550,6 +557,73 @@ public struct FlowerStationMapView: View {
                     }
                 }
 
+                Section(header: Text("預計使用路線 (單一推薦・可更正記憶)")) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            if !selectedRouteName.isEmpty {
+                                Text(selectedRouteName)
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.primary)
+                                if let pref = station.getPreferredRouteName(for: p.name), pref == selectedRouteName {
+                                    Text("使用者指定記憶路線")
+                                        .font(.caption2)
+                                        .foregroundColor(.purple)
+                                } else {
+                                    Text("系統最佳推薦路線")
+                                        .font(.caption2)
+                                        .foregroundColor(.green)
+                                }
+                            } else {
+                                Text("資料庫無匹配路線 (開跑將瞬移至中心)")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Spacer()
+
+                        Menu {
+                            Section(header: Text("更正使用路線 (自動記憶)")) {
+                                ForEach(station.findMatchingRoutes(for: p)) { item in
+                                    Button(action: {
+                                        selectedRouteName = item.route.name
+                                        station.setPreferredRouteName(item.route.name, for: p.name)
+                                        session.showToast("已更正並記住【\(p.name)】使用路線為【\(item.route.name)】")
+                                    }) {
+                                        HStack {
+                                            Text(item.route.name)
+                                            if item.isHarvestRecommended {
+                                                Text("（推薦）")
+                                            }
+                                        }
+                                    }
+                                }
+                                Divider()
+                                ForEach(SavedDatabaseStore.shared.savedRoutes) { r in
+                                    Button(action: {
+                                        selectedRouteName = r.name
+                                        station.setPreferredRouteName(r.name, for: p.name)
+                                        session.showToast("已更正並記住【\(p.name)】使用路線為【\(r.name)】")
+                                    }) {
+                                        Text(r.name)
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "pencil.circle.fill")
+                                Text("更正")
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.orange.opacity(0.12))
+                            .cornerRadius(6)
+                        }
+                    }
+                }
+
                 Section {
                     // 1. 瞬移至此
                     if let coord = p.coordinate {
@@ -602,6 +676,10 @@ public struct FlowerStationMapView: View {
                 let name = station.stationDisplayName
                 self.inputNickname = !name.isEmpty ? name : station.stationEmail
                 self.inputRemark = ""
+                let matches = station.findMatchingRoutes(for: p)
+                let pref = station.getPreferredRouteName(for: p.name)
+                let best = matches.first(where: { $0.route.name == pref }) ?? matches.first
+                self.selectedRouteName = best?.route.name ?? (pref ?? "")
             }
         }
     }
@@ -623,14 +701,27 @@ public struct FlowerStationMapView: View {
                 isSlottingSheetPresented = false
 
                 if startCruise {
-                    // 若有對應座標，立即瞬移並啟動本地巡航，同時記錄進歷史紀錄
-                    if let coord = point.coordinate {
-                        session.teleport(to: coord, label: point.name)
+                    if !self.selectedRouteName.isEmpty,
+                       let chosenRoute = SavedDatabaseStore.shared.savedRoutes.first(where: { $0.name == self.selectedRouteName }) {
+                        self.station.setPreferredRouteName(chosenRoute.name, for: point.name)
+                        // 以「繞圈種花」模式 (executionMode = 1) 啟動巡航
+                        self.session.startFlowerRoute(
+                            name: chosenRoute.name,
+                            basePoints: chosenRoute.nodes,
+                            loops: 0,
+                            settings: self.session.flowerSettings
+                        )
+                        SavedDatabaseStore.shared.useRoute(name: chosenRoute.name)
+                        SavedDatabaseStore.shared.addRouteUsage(chosenRoute.name)
+                        self.session.showToast("已卡位並啟動【\(chosenRoute.name)】繞圈種花巡航！")
+                    } else if let coord = point.coordinate {
+                        self.session.teleport(to: coord, label: point.name)
                         SavedDatabaseStore.shared.addTeleportHistory(
                             lat: coord.latitude,
                             lng: coord.longitude,
                             label: "觀測站【\(point.name)】"
                         )
+                        self.session.showToast("已卡位並瞬移至【\(point.name)】花田中心")
                     }
                     dismiss()
                 }

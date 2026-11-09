@@ -3,6 +3,7 @@ import CoreLocation
 import Combine
 import SwiftUI
 import UIKit
+import UserNotifications
 
 public struct HandshakeAlertInfo: Identifiable {
     public let id = UUID()
@@ -122,7 +123,39 @@ public final class AutoFarmSession: ObservableObject {
     private var waitAccumulatedMs: Double = 0.0
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
+    // Engine State: 嚴格於 engineQueue 維護連續精確座標，杜絕因主執行緒節流更新被丟棄導致的 1/4 假性降速
+    private var engineLat: Double = 25.033964
+    private var engineLng: Double = 121.564468
+    private var engineRouteIndex: Int = 0
+    private var engineCurrentLoop: Int = 0
+    private var engineCooldownSec: Int = 0
+
+    private func syncEngineCoords(lat: Double, lng: Double, index: Int? = nil, loop: Int? = nil, cooldown: Int? = nil) {
+        self.engineLat = lat
+        self.engineLng = lng
+        if let idx = index { self.engineRouteIndex = idx }
+        if let lp = loop { self.engineCurrentLoop = lp }
+        if let cd = cooldown { self.engineCooldownSec = cd }
+    }
+
+    /// 發送靜音本機通知橫幅 (即使在皮克敏介面也能看見上下點切換提示)
+    public func postWaypointNotification(from: Int, to: Int, total: Int, label: String = "航點") {
+        let content = UNMutableNotificationContent()
+        content.title = "AutoFarm 巡航控制"
+        content.body = "成功切換：第 \(from) ➔ 第 \(to) \(label) (共 \(total) \(label))"
+        content.sound = nil
+        let request = UNNotificationRequest(
+            identifier: "autofarm_waypoint_switch",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
     private init() {
+        self.engineLat = currentLat
+        self.engineLng = currentLng
+
         // Load default pairing if exists
         if let defaultPairing = PairingStore.availablePairings().first {
             self.pairingFilePath = defaultPairing.path
@@ -244,6 +277,7 @@ public final class AutoFarmSession: ObservableObject {
             self.currentRouteIndex = validIndex
             self.currentLat = self.routePoints[validIndex].lat
             self.currentLng = self.routePoints[validIndex].lng
+            self.syncEngineCoords(lat: self.routePoints[validIndex].lat, lng: self.routePoints[validIndex].lng, index: validIndex, loop: max(startLoop, 0), cooldown: 0)
             self.isRoutePaused = false
             self.cooldownRemainingSec = 0
             self.waitAccumulatedMs = 0.0
@@ -272,6 +306,7 @@ public final class AutoFarmSession: ObservableObject {
             self.currentRouteIndex = validIndex
             self.currentLat = self.routePoints[validIndex].lat
             self.currentLng = self.routePoints[validIndex].lng
+            self.syncEngineCoords(lat: self.routePoints[validIndex].lat, lng: self.routePoints[validIndex].lng, index: validIndex, loop: max(startLoop, 0), cooldown: 0)
             self.isRoutePaused = false
             self.cooldownRemainingSec = 0
             self.waitAccumulatedMs = 0.0
@@ -300,6 +335,7 @@ public final class AutoFarmSession: ObservableObject {
             self.currentRouteIndex = validIndex
             self.currentLat = self.routePoints[validIndex].lat
             self.currentLng = self.routePoints[validIndex].lng
+            self.syncEngineCoords(lat: self.routePoints[validIndex].lat, lng: self.routePoints[validIndex].lng, index: validIndex, loop: max(startLoop, 0), cooldown: 0)
             self.isRoutePaused = false
             self.cooldownRemainingSec = 0
             self.waitAccumulatedMs = 0.0
@@ -332,6 +368,7 @@ public final class AutoFarmSession: ObservableObject {
             self.currentRouteIndex = 0
             self.currentLat = nodes[0].lat
             self.currentLng = nodes[0].lng
+            self.syncEngineCoords(lat: nodes[0].lat, lng: nodes[0].lng, index: 0, loop: 0, cooldown: 0)
             self.isRoutePaused = false
             self.cooldownRemainingSec = 0
 
@@ -386,6 +423,7 @@ public final class AutoFarmSession: ObservableObject {
                 if let departure = self.detourDepartureCoord {
                     self.currentLat = departure.latitude
                     self.currentLng = departure.longitude
+                    self.syncEngineCoords(lat: departure.latitude, lng: departure.longitude)
                     self.detourDepartureCoord = nil
                     self.pushCurrentLocation()
                     self.showToast("已返回離開點，繼續巡航路線")
@@ -407,23 +445,31 @@ public final class AutoFarmSession: ObservableObject {
         guard !routePoints.isEmpty else { return }
         if executionMode == 1 { // 種花模式：以花苞基準點為單位切換
             let total = max(displayWaypoints.count, 1)
+            let oldIdx = currentDisplayIndex
             let prevDisplayIdx = (currentDisplayIndex - 1 + total) % total
             jumpToWaypoint(index: prevDisplayIdx)
             showToast("已跳至第 \(prevDisplayIdx + 1) / \(total) 朵花")
+            postWaypointNotification(from: oldIdx + 1, to: prevDisplayIdx + 1, total: total, label: "朵花")
         } else if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
             let total = originalBasePoints.count
+            let oldIdx = currentDisplayIndex
             let prevDisplayIdx = (currentDisplayIndex - 1 + total) % total
             jumpToWaypoint(index: prevDisplayIdx)
             showToast("已跳至第 \(prevDisplayIdx + 1) / \(total) 航點")
+            postWaypointNotification(from: oldIdx + 1, to: prevDisplayIdx + 1, total: total, label: "航點")
         } else {
-            self.currentRouteIndex = (self.currentRouteIndex - 1 + routePoints.count) % routePoints.count
+            let total = routePoints.count
+            let oldIdx = currentRouteIndex
+            self.currentRouteIndex = (self.currentRouteIndex - 1 + total) % total
             let prev = routePoints[self.currentRouteIndex]
             self.currentLat = prev.lat
             self.currentLng = prev.lng
+            self.syncEngineCoords(lat: prev.lat, lng: prev.lng, index: self.currentRouteIndex, cooldown: prev.waitTimeSec)
             self.cooldownRemainingSec = prev.waitTimeSec
             self.waitAccumulatedMs = 0.0
-            pushCurrentLocation()
+            pushCurrentLocation(lat: prev.lat, lng: prev.lng)
             showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+            postWaypointNotification(from: oldIdx + 1, to: self.currentRouteIndex + 1, total: total, label: "航點")
         }
     }
 
@@ -432,23 +478,31 @@ public final class AutoFarmSession: ObservableObject {
         guard !routePoints.isEmpty else { return }
         if executionMode == 1 { // 種花模式：以花苞基準點為單位切換
             let total = max(displayWaypoints.count, 1)
+            let oldIdx = currentDisplayIndex
             let nextDisplayIdx = (currentDisplayIndex + 1) % total
             jumpToWaypoint(index: nextDisplayIdx)
             showToast("已跳至第 \(nextDisplayIdx + 1) / \(total) 朵花")
+            postWaypointNotification(from: oldIdx + 1, to: nextDisplayIdx + 1, total: total, label: "朵花")
         } else if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
             let total = originalBasePoints.count
+            let oldIdx = currentDisplayIndex
             let nextDisplayIdx = (currentDisplayIndex + 1) % total
             jumpToWaypoint(index: nextDisplayIdx)
             showToast("已跳至第 \(nextDisplayIdx + 1) / \(total) 航點")
+            postWaypointNotification(from: oldIdx + 1, to: nextDisplayIdx + 1, total: total, label: "航點")
         } else {
-            self.currentRouteIndex = (self.currentRouteIndex + 1) % routePoints.count
+            let total = routePoints.count
+            let oldIdx = currentRouteIndex
+            self.currentRouteIndex = (self.currentRouteIndex + 1) % total
             let next = routePoints[self.currentRouteIndex]
             self.currentLat = next.lat
             self.currentLng = next.lng
+            self.syncEngineCoords(lat: next.lat, lng: next.lng, index: self.currentRouteIndex, cooldown: next.waitTimeSec)
             self.cooldownRemainingSec = next.waitTimeSec
             self.waitAccumulatedMs = 0.0
-            pushCurrentLocation()
+            pushCurrentLocation(lat: next.lat, lng: next.lng)
             showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+            postWaypointNotification(from: oldIdx + 1, to: self.currentRouteIndex + 1, total: total, label: "航點")
         }
     }
 
@@ -503,9 +557,7 @@ public final class AutoFarmSession: ObservableObject {
 
             // 原子化同步至引擎背景線程，杜絕任何時間差與舊位置覆蓋
             self.engineQueue.sync {
-                self.currentLat = targetLat
-                self.currentLng = targetLng
-                self.currentRouteIndex = targetNodeIdx
+                self.syncEngineCoords(lat: targetLat, lng: targetLng, index: targetNodeIdx, cooldown: 0)
                 self.waitAccumulatedMs = 0.0
                 self.cooldownRemainingSec = 0
                 self.lastTickTime = Date().timeIntervalSinceReferenceDate
@@ -567,7 +619,9 @@ public final class AutoFarmSession: ObservableObject {
             routePoints: routePoints,
             basePoints: originalBasePoints,
             executionMode: executionMode,
-            fruitWalkDistance: fruitWalkDistance
+            fruitWalkDistance: fruitWalkDistance,
+            interruptedLat: currentLat,
+            interruptedLng: currentLng
         )
         RouteProgressStore.saveProgress(progress)
     }
@@ -602,6 +656,7 @@ public final class AutoFarmSession: ObservableObject {
             // 2. 瞬移至幾何中心點
             self.currentLat = center.lat
             self.currentLng = center.lng
+            self.syncEngineCoords(lat: center.lat, lng: center.lng)
             self.pushCurrentLocation()
             self.showToast("已定位至【\(self.activeRouteName)】幾何中心 (已暫停路線)")
         }
@@ -619,10 +674,13 @@ public final class AutoFarmSession: ObservableObject {
             loopTarget: routeLoopTarget,
             currentRouteIndex: currentRouteIndex,
             totalPoints: routePoints.count,
+            savedTimestamp: Int64(Date().timeIntervalSince1970 * 1000),
             routePoints: routePoints,
             basePoints: originalBasePoints,
             executionMode: executionMode,
-            fruitWalkDistance: fruitWalkDistance
+            fruitWalkDistance: fruitWalkDistance,
+            interruptedLat: currentLat,
+            interruptedLng: currentLng
         )
         RouteProgressStore.saveProgress(progress)
         showToast("已暫存【\(progress.routeName)】進度：第 \(progress.currentLoop + 1) 圈 第 \(progress.currentRouteIndex)/\(progress.totalPoints) 點")
@@ -641,17 +699,29 @@ public final class AutoFarmSession: ObservableObject {
             self.executionMode = progress.executionMode
             self.fruitWalkDistance = progress.fruitWalkDistance
 
-            let validIndex = min(max(progress.currentRouteIndex, 0), self.routePoints.count - 1)
+            let validIndex = min(max(progress.currentRouteIndex, 0), max(self.routePoints.count - 1, 0))
             self.currentRouteIndex = validIndex
-            self.currentLat = self.routePoints[validIndex].lat
-            self.currentLng = self.routePoints[validIndex].lng
+
+            // 優先恢復中斷時精確座標，若無則降級至目標航點座標
+            let resumeLat = progress.interruptedLat ?? (self.routePoints.indices.contains(validIndex) ? self.routePoints[validIndex].lat : self.currentLat)
+            let resumeLng = progress.interruptedLng ?? (self.routePoints.indices.contains(validIndex) ? self.routePoints[validIndex].lng : self.currentLng)
+
+            self.engineQueue.sync {
+                self.syncEngineCoords(lat: resumeLat, lng: resumeLng, index: validIndex, loop: progress.currentLoop, cooldown: 0)
+                self.waitAccumulatedMs = 0.0
+                self.cooldownRemainingSec = 0
+                self.lastTickTime = Date().timeIntervalSinceReferenceDate
+            }
+
+            self.currentLat = resumeLat
+            self.currentLng = resumeLng
             self.isRoutePaused = false
             self.cooldownRemainingSec = 0
             self.waitAccumulatedMs = 0.0
 
-            self.pushCurrentLocation()
+            self.pushCurrentLocation(lat: resumeLat, lng: resumeLng)
             self.ensureEngineRunning()
-            self.showToast("已接續【\(progress.routeName)】進度 (第 \(progress.currentLoop + 1) 圈)")
+            self.showToast("已接續【\(progress.routeName)】中斷處進度 (第 \(progress.currentLoop + 1) 圈)")
         }
     }
 
@@ -694,6 +764,7 @@ public final class AutoFarmSession: ObservableObject {
             guard let self = self else { return }
             self.currentLat = coord.latitude
             self.currentLng = coord.longitude
+            self.syncEngineCoords(lat: coord.latitude, lng: coord.longitude)
             self.centerCameraOnCurrentLocation()
         }
 
@@ -719,6 +790,7 @@ public final class AutoFarmSession: ObservableObject {
             }
 
             self.engineQueue.sync {
+                self.syncEngineCoords(lat: lat, lng: lng)
                 self.waitAccumulatedMs = 0.0
             }
             self.cooldownRemainingSec = 0
@@ -788,11 +860,11 @@ public final class AutoFarmSession: ObservableObject {
         lastTickTime = now
 
         var isMoving = false
-        var nextLat = currentLat
-        var nextLng = currentLng
-        var nextCooldown = cooldownRemainingSec
-        var nextIndex = currentRouteIndex
-        var nextLoop = routeCurrentLoop
+        var nextLat = engineLat
+        var nextLng = engineLng
+        var nextCooldown = engineCooldownSec
+        var nextIndex = engineRouteIndex
+        var nextLoop = engineCurrentLoop
         var shouldPause = isRoutePaused
         var updatedWaitAccumMs = waitAccumulatedMs
 
@@ -881,6 +953,11 @@ public final class AutoFarmSession: ObservableObject {
             }
         }
 
+        self.engineLat = nextLat
+        self.engineLng = nextLng
+        self.engineRouteIndex = nextIndex
+        self.engineCurrentLoop = nextLoop
+        self.engineCooldownSec = nextCooldown
         self.waitAccumulatedMs = updatedWaitAccumMs
 
         // 節流主執行緒 @Published 派發頻率至 2.5Hz (或在點位/圈數變化時即時派發)，杜絕每 100ms 觸發整頁重繪導致鍵盤輸入卡頓
@@ -910,7 +987,7 @@ public final class AutoFarmSession: ObservableObject {
             // 靜態錨定心跳 (Stationary Anchor Heartbeat)：每 1 秒重新向 locationd 注入當前座標
             if now - lastPushTime >= 1.0 {
                 lastPushTime = now
-                pushCurrentLocation(lat: self.currentLat, lng: self.currentLng)
+                pushCurrentLocation(lat: self.engineLat, lng: self.engineLng)
             }
         }
     }
@@ -933,18 +1010,21 @@ public final class AutoFarmSession: ObservableObject {
                         self.currentRouteIndex = 0
                         self.currentLat = first.lat
                         self.currentLng = first.lng
+                        self.syncEngineCoords(lat: first.lat, lng: first.lng, index: 0, loop: self.routeCurrentLoop, cooldown: cdSec)
                     }
                 } else if self.executionMode == 0 && self.loopMode == .teleportToStart { // 直線跳回起點
                     self.currentRouteIndex = 1
                     if let first = self.routePoints.first {
                         self.currentLat = first.lat
                         self.currentLng = first.lng
+                        self.syncEngineCoords(lat: first.lat, lng: first.lng, index: 1, loop: self.routeCurrentLoop, cooldown: 0)
                     }
                 } else {
                     self.currentRouteIndex = 0
                     if let first = self.routePoints.first {
                         self.currentLat = first.lat
                         self.currentLng = first.lng
+                        self.syncEngineCoords(lat: first.lat, lng: first.lng, index: 0, loop: self.routeCurrentLoop, cooldown: 0)
                     }
                 }
                 self.waitAccumulatedMs = 0.0

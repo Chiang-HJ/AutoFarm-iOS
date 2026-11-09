@@ -77,9 +77,11 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
     }
 
     private var isObserving = false
+    private var volumeWindow: UIWindow?
     private var volumeView: MPVolumeView?
     private var lastTriggerTime: TimeInterval = 0
-    private var isResettingVolume: Bool = false
+    private var userOriginalVolume: Float = 0.0
+    private var userBaselineVolume: Float = 0.05
 
     private var volumeSlider: UISlider? {
         volumeView?.subviews.first(where: { $0 is UISlider }) as? UISlider
@@ -94,34 +96,48 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
 
     public func startMonitoring() {
         guard !isObserving else { return }
+
+        // 設置為 ambient + mixWithOthers，保證 100% 靜音且不打擾其他正在播放的聲音
         do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("Audio session active error: \(error)")
+        }
+
+        let sysVol = AVAudioSession.sharedInstance().outputVolume
+        self.userOriginalVolume = sysVol
+
+        // 計算基準點：
+        // 若使用者原本為 0 音量，使用 0.005 (極微量、DAC 無聲音輸出，但足以讓硬體音量減鍵產生下降至 0.000 之感測)
+        // 若使用者原本為滿音量 1.0，使用 0.995 (使音量加鍵足以產生上升至 1.000 之感測)
+        // 其餘皆完美維持使用者原設定之音量
+        if sysVol < 0.02 {
+            self.userBaselineVolume = 0.005
+        } else if sysVol > 0.98 {
+            self.userBaselineVolume = 0.995
+        } else {
+            self.userBaselineVolume = sysVol
         }
 
         AVAudioSession.sharedInstance().addObserver(self, forKeyPath: "outputVolume", options: [.new, .old], context: nil)
         isObserving = true
 
         DispatchQueue.main.async {
-            if self.volumeView == nil {
-                let v = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
+            if self.volumeWindow == nil {
+                let win = UIWindow(frame: CGRect(x: -200, y: -200, width: 1, height: 1))
+                win.isHidden = false
+                win.windowLevel = .alert + 1
+                let v = MPVolumeView(frame: win.bounds)
                 v.clipsToBounds = true
                 v.alpha = 0.01
-                if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = scene.windows.first {
-                    window.addSubview(v)
-                    self.volumeView = v
-                }
+                win.addSubview(v)
+                self.volumeWindow = win
+                self.volumeView = v
             }
 
-            // 初始化時將系統音量調至 0.5 中點
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.isResettingVolume = true
-                self.volumeSlider?.setValue(0.5, animated: false)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    self.isResettingVolume = false
-                }
+                self.volumeSlider?.setValue(self.userBaselineVolume, animated: false)
             }
         }
     }
@@ -130,24 +146,30 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
         guard isObserving else { return }
         AVAudioSession.sharedInstance().removeObserver(self, forKeyPath: "outputVolume")
         isObserving = false
+
+        // 停止時將音量百分之百精確還原至使用者進入前的原始音量 (包括 0 音量)
+        self.volumeSlider?.setValue(self.userOriginalVolume, animated: false)
+
         volumeView?.removeFromSuperview()
         volumeView = nil
+        volumeWindow?.isHidden = true
+        volumeWindow = nil
     }
 
     public override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         guard keyPath == "outputVolume", let change = change else { return }
-        if isResettingVolume { return }
+        guard let newVolume = change[.newKey] as? Float else { return }
 
-        guard let newVolume = change[.newKey] as? Float, let oldVolume = change[.oldKey] as? Float else { return }
-        if abs(newVolume - oldVolume) < 0.0005 { return }
+        // 若音量等於基準點（重設時觸發之回調），完全忽略
+        if abs(newVolume - userBaselineVolume) < 0.012 { return }
 
         let now = Date().timeIntervalSinceReferenceDate
-        // 防抖閥值 0.35 秒，杜絕硬體一次按壓重複觸發 (+2)
-        guard now - lastTriggerTime > 0.35 else { return }
+        // 硬體防抖閥值 0.45 秒，杜絕硬體一次按壓重複觸發 (+2)
+        guard now - lastTriggerTime > 0.45 else { return }
         lastTriggerTime = now
 
-        let isUp = (newVolume > oldVolume) || (newVolume >= 0.99)
-        let isDown = (newVolume < oldVolume) || (newVolume <= 0.01)
+        let isUp = (newVolume > userBaselineVolume)
+        let isDown = (newVolume < userBaselineVolume)
 
         DispatchQueue.main.async {
             if isUp {
@@ -156,13 +178,9 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
                 self.executeAction(self.volumeDownAction)
             }
 
-            // 將滑桿重設回 0.5，讓音量鍵 (+) 與 (-) 永遠處於可感測區間
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                self.isResettingVolume = true
-                self.volumeSlider?.setValue(0.5, animated: false)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    self.isResettingVolume = false
-                }
+            // 重設回基準點，使加減鍵永遠可持續感測，且保持使用者原音量
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.volumeSlider?.setValue(self.userBaselineVolume, animated: false)
             }
         }
     }

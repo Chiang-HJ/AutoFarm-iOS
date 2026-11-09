@@ -22,11 +22,10 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMapTap(_:)))
         mapView.addGestureRecognizer(tapGesture)
 
-        // 初始預設視角：以第一個點位或台北為中心
-        if let first = station.allPoints.first(where: { $0.coordinate != nil }), let coord = first.coordinate {
-            let region = MKCoordinateRegion(center: coord, latitudinalMeters: 4000, longitudinalMeters: 4000)
-            mapView.setRegion(region, animated: false)
-        }
+        // 初始預設視角：直接定位到孟買花田核心區域 (19.0542, 72.8450)
+        let mumbaiCoord = CLLocationCoordinate2D(latitude: 19.0542, longitude: 72.8450)
+        let region = MKCoordinateRegion(center: mumbaiCoord, latitudinalMeters: 18000, longitudinalMeters: 18000)
+        mapView.setRegion(region, animated: false)
 
         return mapView
     }

@@ -22,7 +22,18 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
     public var coordsString: String
     public var latitude: Double?
     public var longitude: Double?
-    public var isCounting: Bool
+    private var _isCounting: Bool = false
+    public var isCounting: Bool {
+        get {
+            guard _isCounting else { return false }
+            let now = Date().timeIntervalSince1970 * 1000
+            // 剩餘時間小於等於 0 或 0h0m 視為已結束冷卻，自動切為待機中
+            return (endTime - now) > 1000.0
+        }
+        set {
+            _isCounting = newValue
+        }
+    }
     public var endTime: Double
     public var duration: Double?
     public var cooldown: String?
@@ -34,6 +45,13 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
     public var customHours: Double?
     public var hull: [HullPoint]?
     public var seedlings: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case index, name, coordsString, latitude, longitude
+        case _isCounting = "isCounting"
+        case endTime, duration, cooldown, isHidden, unhideTime
+        case planter, occupierUid, remark, customHours, hull, seedlings
+    }
 
     public init(
         index: Int,
@@ -59,7 +77,7 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
         self.coordsString = coordsString
         self.latitude = latitude
         self.longitude = longitude
-        self.isCounting = isCounting
+        self._isCounting = isCounting
         self.endTime = endTime
         self.duration = duration
         self.cooldown = cooldown
@@ -527,8 +545,12 @@ public final class FlowerStationManager: ObservableObject {
             }
         }
 
-        let isCounting = raw["isCounting"] as? Bool ?? false
+        var isCounting = raw["isCounting"] as? Bool ?? false
         let endTime = raw["endTime"] as? Double ?? (raw["endTime"] as? Int64).map { Double($0) } ?? 0.0
+        let now = Date().timeIntervalSince1970 * 1000
+        if isCounting && (endTime - now <= 1000.0) {
+            isCounting = false
+        }
         let duration = raw["duration"] as? Double ?? (raw["duration"] as? Int64).map { Double($0) }
         let cooldown = raw["cooldown"] as? String ?? (raw["cooldown"] as? Int).map { String($0) } ?? "23"
         let isHidden = raw["isHidden"] as? Bool ?? false

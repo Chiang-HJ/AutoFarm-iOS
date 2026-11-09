@@ -61,14 +61,14 @@ public final class SilentAudioKeepAlive: NSObject, AVAudioPlayerDelegate {
 
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
 
             let url = try Self.writeSilentWAV()
             let p = try AVAudioPlayer(contentsOf: url)
             p.delegate = self
             p.numberOfLoops = -1
-            p.volume = 0.01
+            p.volume = 0.0
             p.prepareToPlay()
             p.play()
             self.player = p

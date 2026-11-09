@@ -129,12 +129,14 @@ public struct ControlDrawerView: View {
                 .transition(.opacity)
             }
         }
-        .frame(height: max(130, min(UIScreen.main.bounds.height - 80, drawerHeight - dragOffset)), alignment: .top)
+        .frame(height: max(130, min(UIScreen.main.bounds.height - 80, drawerHeight)), alignment: .top)
+        .offset(y: dragOffset)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color(UIColor.systemBackground))
                 .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: -3)
+                .padding(.bottom, -400)
         )
         .fileImporter(
             isPresented: $isFileImporterPresented,

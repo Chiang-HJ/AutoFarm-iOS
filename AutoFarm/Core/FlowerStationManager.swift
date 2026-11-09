@@ -39,9 +39,39 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
     public var cooldown: String?
     public var isHidden: Bool
     public var unhideTime: Double?
-    public var planter: String
-    public var occupierUid: String?
-    public var remark: String
+
+    private var _planter: String = ""
+    public var planter: String {
+        get {
+            // 待命狀態自動清空暱稱
+            return isCounting ? _planter : ""
+        }
+        set {
+            _planter = newValue
+        }
+    }
+
+    private var _occupierUid: String? = nil
+    public var occupierUid: String? {
+        get {
+            return isCounting ? _occupierUid : nil
+        }
+        set {
+            _occupierUid = newValue
+        }
+    }
+
+    private var _remark: String = ""
+    public var remark: String {
+        get {
+            // 待命狀態自動清空備註
+            return isCounting ? _remark : ""
+        }
+        set {
+            _remark = newValue
+        }
+    }
+
     public var customHours: Double?
     public var hull: [HullPoint]?
     public var seedlings: Int?
@@ -50,7 +80,10 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
         case index, name, coordsString, latitude, longitude
         case _isCounting = "isCounting"
         case endTime, duration, cooldown, isHidden, unhideTime
-        case planter, occupierUid, remark, customHours, hull, seedlings
+        case _planter = "planter"
+        case _occupierUid = "occupierUid"
+        case _remark = "remark"
+        case customHours, hull, seedlings
     }
 
     public init(
@@ -83,9 +116,9 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
         self.cooldown = cooldown
         self.isHidden = isHidden
         self.unhideTime = unhideTime
-        self.planter = planter
-        self.occupierUid = occupierUid
-        self.remark = remark
+        self._planter = isCounting ? planter : ""
+        self._occupierUid = isCounting ? occupierUid : nil
+        self._remark = isCounting ? remark : ""
         self.customHours = customHours
         self.hull = hull
         self.seedlings = seedlings
@@ -555,9 +588,10 @@ public final class FlowerStationManager: ObservableObject {
         let cooldown = raw["cooldown"] as? String ?? (raw["cooldown"] as? Int).map { String($0) } ?? "23"
         let isHidden = raw["isHidden"] as? Bool ?? false
         let unhideTime = raw["unhideTime"] as? Double
-        let planter = raw["planter"] as? String ?? ""
-        let occupierUid = raw["occupierUid"] as? String
-        let remark = raw["remark"] as? String ?? ""
+        // 待命的花田一律自動清空暱稱與備註
+        let planter = isCounting ? (raw["planter"] as? String ?? "") : ""
+        let occupierUid = isCounting ? (raw["occupierUid"] as? String) : nil
+        let remark = isCounting ? (raw["remark"] as? String ?? "") : ""
         let customHours = raw["customHours"] as? Double
 
         var hullPoints: [HullPoint]? = nil

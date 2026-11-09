@@ -459,9 +459,9 @@ public struct FlowerStationMapView: View {
                 }
             }
 
-            // 備註與卡位者
+            // 備註與卡位者 (僅在冷卻中顯示，待命時自動清空不顯示)
             HStack(spacing: 12) {
-                if !p.planter.isEmpty {
+                if p.isCounting && !p.planter.isEmpty {
                     HStack(spacing: 4) {
                         Image(systemName: "person.fill")
                             .font(.system(size: 11))
@@ -471,7 +471,7 @@ public struct FlowerStationMapView: View {
                     .foregroundColor(.secondary)
                 }
 
-                if !p.remark.isEmpty {
+                if p.isCounting && !p.remark.isEmpty {
                     HStack(spacing: 4) {
                         Image(systemName: "note.text")
                             .font(.system(size: 11))

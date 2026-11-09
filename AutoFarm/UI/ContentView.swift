@@ -218,6 +218,12 @@ public struct ContentView: View {
                     }
                 )
             }
+
+            // 7. 隱形掛載之系統音量鍵攔截器 (提供靜音時上一點與下一點感測，隱藏原生 HUD)
+            SystemVolumeInterceptionBridge()
+                .frame(width: 1, height: 1)
+                .opacity(0.001)
+                .allowsHitTesting(false)
         }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true

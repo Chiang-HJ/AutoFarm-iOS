@@ -77,20 +77,70 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
     }
 
     private var isObserving = false
-    private var volumeWindow: UIWindow?
-    private var volumeView: MPVolumeView?
+    private weak var volumeView: MPVolumeView?
+    private weak var volumeSlider: UISlider?
     private var lastTriggerTime: TimeInterval = 0
     private var userOriginalVolume: Float = 0.0
-    private var userBaselineVolume: Float = 0.05
-
-    private var volumeSlider: UISlider? {
-        volumeView?.subviews.first(where: { $0 is UISlider }) as? UISlider
-    }
+    private var userBaselineVolume: Float = 0.02
+    private var isResetting: Bool = false
 
     private override init() {
         super.init()
         if isEnabled {
             startMonitoring()
+        }
+    }
+
+    /// 由 SwiftUI 視圖層級直接注入已掛載至真實 Window 的 MPVolumeView
+    public func setupVolumeView(_ view: MPVolumeView) {
+        self.volumeView = view
+        findAndCacheSlider(in: view)
+        if isEnabled {
+            startMonitoring()
+        }
+    }
+
+    private func findAndCacheSlider(in root: UIView) {
+        func search(in view: UIView) -> UISlider? {
+            if let s = view as? UISlider { return s }
+            for sub in view.subviews {
+                if let s = search(in: sub) { return s }
+            }
+            return nil
+        }
+
+        if let s = search(in: root) {
+            self.volumeSlider = s
+        } else {
+            // MPVolumeView 可能在首次渲染時非同步建構 subviews
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak root] in
+                guard let self = self, let r = root else { return }
+                self.volumeSlider = search(in: r)
+            }
+        }
+    }
+
+    private var activeSlider: UISlider? {
+        if let s = volumeSlider { return s }
+        if let v = volumeView {
+            findAndCacheSlider(in: v)
+            return volumeSlider
+        }
+        return nil
+    }
+
+    /// 真正透過 MPVolumeSlider 與 valueChanged 事件變更系統音量
+    private func setSystemVolume(_ val: Float) {
+        let work = {
+            guard let slider = self.activeSlider else { return }
+            slider.setValue(val, animated: false)
+            slider.sendActions(for: .valueChanged)
+        }
+
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
         }
     }
 
@@ -109,13 +159,13 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
         self.userOriginalVolume = sysVol
 
         // 計算基準點：
-        // 若使用者原本為 0 音量，使用 0.005 (極微量、DAC 無聲音輸出，但足以讓硬體音量減鍵產生下降至 0.000 之感測)
-        // 若使用者原本為滿音量 1.0，使用 0.995 (使音量加鍵足以產生上升至 1.000 之感測)
+        // 若使用者原本為 0 音量（靜音），設置 0.02（極微量、DAC 無聲音輸出，但足以讓硬體音量減鍵產生下降至 0.00 之感測）
+        // 若使用者原本為滿音量 1.0，設置 0.98（使音量加鍵足以產生上升至 1.00 之感測）
         // 其餘皆完美維持使用者原設定之音量
         if sysVol < 0.02 {
-            self.userBaselineVolume = 0.005
+            self.userBaselineVolume = 0.02
         } else if sysVol > 0.98 {
-            self.userBaselineVolume = 0.995
+            self.userBaselineVolume = 0.98
         } else {
             self.userBaselineVolume = sysVol
         }
@@ -123,22 +173,8 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
         AVAudioSession.sharedInstance().addObserver(self, forKeyPath: "outputVolume", options: [.new, .old], context: nil)
         isObserving = true
 
-        DispatchQueue.main.async {
-            if self.volumeWindow == nil {
-                let win = UIWindow(frame: CGRect(x: -200, y: -200, width: 1, height: 1))
-                win.isHidden = false
-                win.windowLevel = .alert + 1
-                let v = MPVolumeView(frame: win.bounds)
-                v.clipsToBounds = true
-                v.alpha = 0.01
-                win.addSubview(v)
-                self.volumeWindow = win
-                self.volumeView = v
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.volumeSlider?.setValue(self.userBaselineVolume, animated: false)
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            self.setSystemVolume(self.userBaselineVolume)
         }
     }
 
@@ -148,24 +184,20 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
         isObserving = false
 
         // 停止時將音量百分之百精確還原至使用者進入前的原始音量 (包括 0 音量)
-        self.volumeSlider?.setValue(self.userOriginalVolume, animated: false)
-
-        volumeView?.removeFromSuperview()
-        volumeView = nil
-        volumeWindow?.isHidden = true
-        volumeWindow = nil
+        self.setSystemVolume(self.userOriginalVolume)
     }
 
     public override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         guard keyPath == "outputVolume", let change = change else { return }
+        if isResetting { return }
         guard let newVolume = change[.newKey] as? Float else { return }
 
         // 若音量等於基準點（重設時觸發之回調），完全忽略
-        if abs(newVolume - userBaselineVolume) < 0.012 { return }
+        if abs(newVolume - userBaselineVolume) < 0.008 { return }
 
         let now = Date().timeIntervalSinceReferenceDate
-        // 硬體防抖閥值 0.45 秒，杜絕硬體一次按壓重複觸發 (+2)
-        guard now - lastTriggerTime > 0.45 else { return }
+        // 硬體防抖閥值 0.40 秒，杜絕硬體一次按壓重複觸發 (+2)
+        guard now - lastTriggerTime > 0.40 else { return }
         lastTriggerTime = now
 
         let isUp = (newVolume > userBaselineVolume)
@@ -179,8 +211,12 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
             }
 
             // 重設回基準點，使加減鍵永遠可持續感測，且保持使用者原音量
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self.volumeSlider?.setValue(self.userBaselineVolume, animated: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                self.isResetting = true
+                self.setSystemVolume(self.userBaselineVolume)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    self.isResetting = false
+                }
             }
         }
     }

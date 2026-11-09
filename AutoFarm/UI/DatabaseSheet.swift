@@ -76,47 +76,6 @@ public struct DatabaseSheet: View {
                 leading: Button("關閉") { dismiss() },
                 trailing: headerTrailingActions
             )
-            // 批次匯入 GPX/CSV/TXT (支援多選)
-            .fileImporter(
-                isPresented: $isFileImporterPresented,
-                allowedContentTypes: [
-                    UTType(filenameExtension: "gpx") ?? .data,
-                    UTType.commaSeparatedText,
-                    UTType.plainText,
-                    UTType.text,
-                    UTType.data
-                ],
-                allowsMultipleSelection: true
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard !urls.isEmpty else { return }
-                    let (successCount, failedCount, names) = db.importRoutesFromFiles(urls: urls)
-                    if successCount > 0 {
-                        let sample = names.prefix(3).joined(separator: ", ")
-                        session.toastMessage = "成功批次匯入 \(successCount) 條路線！[\(sample)\(names.count > 3 ? "..." : "")]"
-                    } else {
-                        session.toastMessage = "匯入失敗，選取檔案中未包含有效座標"
-                    }
-                case .failure(let err):
-                    session.toastMessage = "選取檔案失敗: \(err.localizedDescription)"
-                }
-            }
-            // 還原全庫備份 (JSON)
-            .fileImporter(
-                isPresented: $isRestoreImporterPresented,
-                allowedContentTypes: [UTType.json, UTType.data],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else { return }
-                    let (ok, msg) = db.restoreFullBackup(from: url, merge: false)
-                    session.toastMessage = msg
-                case .failure(let err):
-                    session.toastMessage = "還原失敗: \(err.localizedDescription)"
-                }
-            }
             .sheet(isPresented: $isShareBackupPresented) {
                 if let url = backupShareUrl {
                     ActivityView(activityItems: [url])
@@ -235,6 +194,20 @@ public struct DatabaseSheet: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 16))
+            }
+        }
+        .fileImporter(
+            isPresented: $isRestoreImporterPresented,
+            allowedContentTypes: [UTType.json, UTType.data, UTType.item],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let (ok, msg) = db.restoreFullBackup(from: url, merge: false)
+                session.toastMessage = msg
+            case .failure(let err):
+                session.toastMessage = "還原失敗: \(err.localizedDescription)"
             }
         }
     }
@@ -469,6 +442,34 @@ public struct DatabaseSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
+        }
+        .fileImporter(
+            isPresented: $isFileImporterPresented,
+            allowedContentTypes: [
+                UTType.data,
+                UTType.item,
+                UTType.content,
+                UTType.plainText,
+                UTType.commaSeparatedText,
+                UTType.xml,
+                UTType.text,
+                UTType(filenameExtension: "gpx") ?? .item
+            ],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard !urls.isEmpty else { return }
+                let (successCount, failedCount, names) = db.importRoutesFromFiles(urls: urls)
+                if successCount > 0 {
+                    let sample = names.prefix(3).joined(separator: ", ")
+                    session.toastMessage = "成功批次匯入 \(successCount) 條路線：[\(sample)\(names.count > 3 ? "..." : "")]"
+                } else {
+                    session.toastMessage = "匯入失敗，選取檔案中未包含有效座標"
+                }
+            case .failure(let err):
+                session.toastMessage = "選取檔案失敗: \(err.localizedDescription)"
+            }
         }
     }
 

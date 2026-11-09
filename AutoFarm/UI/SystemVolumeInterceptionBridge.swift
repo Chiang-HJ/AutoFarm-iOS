@@ -6,8 +6,8 @@ public struct SystemVolumeInterceptionBridge: UIViewRepresentable {
     public init() {}
 
     public func makeUIView(context: Context) -> MPVolumeView {
-        let v = MPVolumeView(frame: CGRect(x: -100, y: -100, width: 1, height: 1))
-        v.alpha = 0.001
+        let v = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 2, height: 2))
+        v.alpha = 0.01
         v.clipsToBounds = true
         v.showsRouteButton = false
         VolumeButtonManager.shared.setupVolumeView(v)

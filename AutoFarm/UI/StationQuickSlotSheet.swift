@@ -28,11 +28,11 @@ public struct StationQuickSlotSheet: View {
                         Spacer()
                         Text(point.name).bold()
                     }
-                    if !point.seedlings.isEmpty {
+                    if let s = point.seedlings {
                         HStack {
                             Text("苗數規格")
                             Spacer()
-                            Text(point.seedlings).foregroundColor(.secondary)
+                            Text("\(s) 苗").foregroundColor(.secondary)
                         }
                     }
                     HStack {

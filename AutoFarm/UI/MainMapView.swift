@@ -192,20 +192,18 @@ public struct MainMapView: UIViewRepresentable {
             var newAnnotations: [MKAnnotation] = []
 
             for pt in indiaPoints {
-                let polygonCoords = pt.polygonBoundaryCoordinates
-                if polygonCoords.count >= 3 {
-                    var coords = polygonCoords
-                    let polygon = StationPolygon(coordinates: &coords, count: coords.count, point: pt, polygonCoordinates: polygonCoords)
+                guard let center = pt.coordinate else { continue }
+                if let hull = pt.hull, hull.count >= 3 {
+                    let coords = hull.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+                    let polygon = StationPolygon(coordinates: coords, count: coords.count, point: pt, polygonCoordinates: coords)
                     newOverlays.append(polygon)
-                } else if let coord = pt.coordinate {
-                    let circle = StationCircle(center: coord, radius: 26.0, point: pt)
+                } else {
+                    let circle = StationCircle(center: center, radius: 45.0, point: pt)
                     newOverlays.append(circle)
                 }
 
-                if let centerCoord = pt.centerCoordinate {
-                    let badge = StationBadgeAnnotation(point: pt, coordinate: centerCoord)
-                    newAnnotations.append(badge)
-                }
+                let badge = StationBadgeAnnotation(point: pt, coordinate: center)
+                newAnnotations.append(badge)
             }
 
             if !newOverlays.isEmpty {

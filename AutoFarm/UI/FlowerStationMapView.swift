@@ -627,11 +627,10 @@ public struct FlowerStationMapView: View {
                     // 若有對應座標，立即瞬移並啟動本地巡航，同時記錄進歷史紀錄
                     if let coord = point.coordinate {
                         session.teleport(to: coord, label: point.name)
-                        SavedDatabaseStore.shared.addRouteHistory(
-                            name: "觀測站【\(point.name)】",
-                            basePoints: [RouteNode(lat: coord.latitude, lng: coord.longitude, label: point.name)],
-                            loops: 0,
-                            mode: 1
+                        SavedDatabaseStore.shared.addTeleportHistory(
+                            lat: coord.latitude,
+                            lng: coord.longitude,
+                            label: "觀測站【\(point.name)】"
                         )
                     }
                     dismiss()

@@ -266,6 +266,8 @@ public final class SavedDatabaseStore: ObservableObject {
         }
         return list.sorted { a, b in
             switch sortMode {
+            case .recentlyUsed:
+                return (a.lastUsedAt ?? a.createdAt) > (b.lastUsedAt ?? b.createdAt)
             case .pinFirst:
                 if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
                 return a.createdAt > b.createdAt
@@ -293,6 +295,8 @@ public final class SavedDatabaseStore: ObservableObject {
         }
         return list.sorted { a, b in
             switch sortMode {
+            case .recentlyUsed:
+                return (a.lastUsedAt ?? a.createdAt) > (b.lastUsedAt ?? b.createdAt)
             case .pinFirst:
                 if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
                 return a.createdAt > b.createdAt
@@ -717,10 +721,6 @@ public final class SavedDatabaseStore: ObservableObject {
         saveHistory()
 
         return (true, "成功匯入 \(resolvedLocations.count) 個座標、\(resolvedRoutes.count) 條路線！")
-
-        let totalLocs = payload.savedLocations.count
-        let totalRoutes = payload.savedRoutes.count
-        return (true, "還原成功！已載入 \(totalLocs) 個座標、\(totalRoutes) 條路線。")
     }
 
     // MARK: - 內部解析工具
@@ -759,7 +759,7 @@ public final class SavedDatabaseStore: ObservableObject {
     }
 
     public struct ParsedGPXRoute {
-        public let name: String
+        public var name: String
         public let nodes: [RouteNode]
 
         public init(name: String, nodes: [RouteNode]) {

@@ -57,8 +57,8 @@ public struct ControlDrawerView: View {
     @State private var showJumpPointAlert: Bool = false
     @State private var jumpPointInputText: String = ""
 
-    // 自由拖曳抽屜高度狀態 (緊湊 130, 半高 380, 全螢幕 640)
-    @State private var drawerHeight: CGFloat = 380
+    // 自由拖曳抽屜高度狀態 (緊湊 165/285, 半高 460/580, 全螢幕)
+    @State private var drawerHeight: CGFloat = 460
     @GestureState private var dragOffset: CGFloat = 0
 
     // 儲存目前位置命名詢問彈窗 (留空自動反向地理編碼國家地名)
@@ -105,39 +105,58 @@ public struct ControlDrawerView: View {
         self.onOpenSettings = onOpenSettings
     }
 
+    private var minCollapsedHeight: CGFloat {
+        session.routePoints.isEmpty ? 165 : 285
+    }
+
+    private var defaultExpandedHeight: CGFloat {
+        session.routePoints.isEmpty ? 460 : 580
+    }
+
     public var body: some View {
-        VStack(spacing: 8) {
-            // 頂部抓把與抽屜標題列
+        VStack(spacing: 0) {
+            // 1. 頂部抓把與抽屜標題列 (固定置頂)
             drawerHeader
+                .padding(.top, 4)
+                .padding(.bottom, 6)
 
-            // 運行中巡航卡片 (對齊安卓懸浮球功能按鍵)
-            if !session.routePoints.isEmpty {
-                activeRouteControlCard
-            } else {
-                // 平時待命時的獨立速度調整區塊 (純輸入框，支援收起鍵盤，無快捷鍵)
-                idleSpeedControlSection
-            }
-
-            // 展開時顯示資料庫內容
-            if isExpanded {
-                VStack(spacing: 8) {
-                    if selectedTab == 0 {
-                        locationsSection
-                    } else if selectedTab == 1 {
-                        routesSection
-                    } else {
-                        locationHistorySection
-                    }
-
-                    // 最下方的三個 Tab 導覽列
-                    bottomTabBar
+            // 2. 中間內容區 (在頂部標題與底部 Tab 之間自適應填充剩餘高度)
+            VStack(spacing: 8) {
+                if !session.routePoints.isEmpty {
+                    activeRouteControlCard
+                } else {
+                    idleSpeedControlSection
                 }
-                .transition(.opacity)
+
+                if isExpanded {
+                    Group {
+                        if selectedTab == 0 {
+                            locationsSection
+                        } else if selectedTab == 1 {
+                            routesSection
+                        } else {
+                            locationHistorySection
+                        }
+                    }
+                    .transition(.opacity)
+                } else {
+                    Spacer(minLength: 0)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            // 3. 最底部強制釘選之主頁三大 Tab 導覽列 (永遠置底、永遠可見、杜絕被內容推擠或裁切)
+            VStack(spacing: 0) {
+                Divider()
+                    .padding(.bottom, 6)
+
+                bottomTabBar
+                    .padding(.bottom, 22) // 避開 iPhone 底部 Home Indicator 橫條
+            }
+            .background(Color(UIColor.systemBackground))
         }
-        .frame(height: max(130, min(UIScreen.main.bounds.height - 80, drawerHeight)), alignment: .top)
+        .frame(height: max(minCollapsedHeight, min(UIScreen.main.bounds.height - 80, drawerHeight)))
         .offset(y: dragOffset)
-        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color(UIColor.systemBackground))
@@ -310,12 +329,12 @@ public struct ControlDrawerView: View {
                         .clipShape(Circle())
                 }
 
-                // 展開 / 收合切換 (點擊切換 130 <-> 380)
+                // 展開 / 收合切換
                 Button(action: {
                     hideKeyboard()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         isExpanded.toggle()
-                        drawerHeight = isExpanded ? 380 : 130
+                        drawerHeight = isExpanded ? defaultExpandedHeight : minCollapsedHeight
                     }
                 }) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
@@ -336,11 +355,11 @@ public struct ControlDrawerView: View {
                 }
                 .onEnded { value in
                     let rawHeight = drawerHeight - value.translation.height
-                    let snapPoints: [CGFloat] = [130, 380, 640]
-                    let target = snapPoints.min(by: { abs($0 - rawHeight) < abs($1 - rawHeight) }) ?? 380
+                    let snapPoints: [CGFloat] = [minCollapsedHeight, defaultExpandedHeight, UIScreen.main.bounds.height - 80]
+                    let target = snapPoints.min(by: { abs($0 - rawHeight) < abs($1 - rawHeight) }) ?? defaultExpandedHeight
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                         drawerHeight = target
-                        isExpanded = target > 140
+                        isExpanded = target > (minCollapsedHeight + 20)
                     }
                 }
         )
@@ -747,7 +766,6 @@ public struct ControlDrawerView: View {
         .background(Color(UIColor.secondarySystemBackground).opacity(0.95))
         .cornerRadius(12)
         .padding(.horizontal, 16)
-        .padding(.bottom, 4)
     }
 
     private func tabButton(title: String, count: Int, icon: String, tabIndex: Int) -> some View {
@@ -755,6 +773,10 @@ public struct ControlDrawerView: View {
         return Button(action: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                 selectedTab = tabIndex
+                if !isExpanded {
+                    isExpanded = true
+                    drawerHeight = defaultExpandedHeight
+                }
             }
         }) {
             HStack(spacing: 4) {
@@ -764,7 +786,7 @@ public struct ControlDrawerView: View {
                     .font(.system(size: 11, weight: isSelected ? .bold : .medium))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 7)
+            .padding(.vertical, 8)
             .background(isSelected ? Color.blue : Color.clear)
             .foregroundColor(isSelected ? .white : .secondary)
             .cornerRadius(9)

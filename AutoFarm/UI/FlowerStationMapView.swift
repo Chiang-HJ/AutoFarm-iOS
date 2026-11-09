@@ -712,7 +712,6 @@ public struct FlowerStationMapView: View {
                             settings: self.session.flowerSettings
                         )
                         SavedDatabaseStore.shared.useRoute(name: chosenRoute.name)
-                        SavedDatabaseStore.shared.addRouteUsage(chosenRoute.name)
                         self.session.showToast("已卡位並啟動【\(chosenRoute.name)】繞圈種花巡航！")
                     } else if let coord = point.coordinate {
                         self.session.teleport(to: coord, label: point.name)

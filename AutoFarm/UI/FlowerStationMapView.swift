@@ -569,7 +569,7 @@ public struct FlowerStationMapView: View {
         let nickname = inputNickname.trimmingCharacters(in: .whitespacesAndNewlines)
         let remark = inputRemark.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        station.occupySpot(pointIndex: point.index, pointName: point.name, nickname: nickname, durationHours: 23.0, isHidden: false, remark: remark) { success, msg in
+        station.occupySpot(pointIndex: point.index, pointName: point.name, planterNickname: nickname, durationHours: 23.0, isHidden: false, remark: remark) { success, msg in
             isSubmittingSlot = false
             if success {
                 session.showToast("已成功卡位【\(point.name)】！")

@@ -449,11 +449,7 @@ public final class AutoFarmSession: ObservableObject {
 
     /// 切換暫停與繼續
     public func togglePauseResume() {
-        if isRoutePaused {
-            resumeRoute()
-        } else {
-            pauseRoute()
-        }
+        toggleRoutePause()
     }
 
     /// 直接輸入點位數字跳點 (1-indexed)

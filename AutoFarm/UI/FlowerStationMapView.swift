@@ -66,12 +66,29 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
             mapView.addAnnotations(newAnnotations)
         }
 
-        // 若選中特定點位，地圖平滑置中
+        // 若選中特定點位，地圖平滑置中並高亮繪製推薦路線折線
         if let sel = selectedPoint, let coord = sel.coordinate {
             if context.coordinator.lastSelectedId != sel.id {
                 context.coordinator.lastSelectedId = sel.id
                 let region = MKCoordinateRegion(center: coord, latitudinalMeters: 1200, longitudinalMeters: 1200)
                 mapView.setRegion(region, animated: true)
+
+                // 移除舊路線折線
+                if let oldLine = context.coordinator.currentRoutePolyline {
+                    mapView.removeOverlay(oldLine)
+                    context.coordinator.currentRoutePolyline = nil
+                }
+
+                // 繪製該花田之推薦路線折線
+                let matches = station.findMatchingRoutes(for: sel)
+                let pref = station.getPreferredRouteName(for: sel.name)
+                if let best = matches.first(where: { $0.route.name == pref }) ?? matches.first,
+                   best.route.nodes.count > 1 {
+                    let routeCoords = best.route.nodes.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+                    let polyline = MKPolyline(coordinates: routeCoords, count: routeCoords.count)
+                    mapView.addOverlay(polyline)
+                    context.coordinator.currentRoutePolyline = polyline
+                }
             }
         }
     }
@@ -84,13 +101,20 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
         var parent: FlowerStationMapContainer
         var cachedPointCount: Int = -1
         var lastSelectedId: String = ""
+        var currentRoutePolyline: MKPolyline?
 
         init(_ parent: FlowerStationMapContainer) {
             self.parent = parent
         }
 
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            if let poly = overlay as? StationPolygon {
+            if let polyline = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor.systemPurple
+                renderer.lineWidth = 3.6
+                renderer.lineDashPattern = [6, 4]
+                return renderer
+            } else if let poly = overlay as? StationPolygon {
                 let renderer = MKPolygonRenderer(polygon: poly)
                 let isCooling = poly.point.isCounting
                 renderer.fillColor = isCooling ? UIColor.systemRed.withAlphaComponent(0.20) : UIColor.systemGreen.withAlphaComponent(0.20)
@@ -227,10 +251,6 @@ public struct FlowerStationMapView: View {
     // 卡位彈窗表單
     @State private var isSlottingSheetPresented: Bool = false
     @State private var slottingPoint: FlowerStationPoint? = nil
-    @State private var inputNickname: String = ""
-    @State private var inputRemark: String = ""
-    @State private var selectedRouteName: String = ""
-    @State private var isSubmittingSlot: Bool = false
 
     public init() {}
 
@@ -270,7 +290,9 @@ public struct FlowerStationMapView: View {
             )
             .sheet(isPresented: $isSlottingSheetPresented) {
                 if let p = slottingPoint {
-                    slotActionSheet(for: p)
+                    StationQuickSlotSheet(point: p) {
+                        self.isSlottingSheetPresented = false
+                    }
                 }
             }
             .onAppear {
@@ -517,216 +539,4 @@ public struct FlowerStationMapView: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: - 卡位與開跑彈窗 (預填暱稱，備註選填)
-    private func slotActionSheet(for p: FlowerStationPoint) -> some View {
-        NavigationView {
-            Form {
-                Section(header: Text("花田資訊")) {
-                    HStack {
-                        Text("名稱")
-                        Spacer()
-                        Text(p.name).bold()
-                    }
-                    if let s = p.seedlings, s > 0 {
-                        HStack {
-                            Text("苗數")
-                            Spacer()
-                            Text("\(s) 苗")
-                        }
-                    }
-                    HStack {
-                        Text("狀態")
-                        Spacer()
-                        Text(p.isCounting ? "冷卻中 (剩餘 \(p.remainingFormatted))" : "空間待命")
-                            .foregroundColor(p.isCounting ? .red : .green)
-                            .bold()
-                    }
-                }
-
-                Section(header: Text("卡位設定 (已自動預填您的帳號暱稱)")) {
-                    HStack {
-                        Image(systemName: "person.crop.circle.fill")
-                            .foregroundColor(.blue)
-                        TextField("種花者暱稱", text: $inputNickname)
-                    }
-
-                    HStack {
-                        Image(systemName: "square.and.pencil")
-                            .foregroundColor(.secondary)
-                        TextField("備註說明 (選填，如花種/時間)", text: $inputRemark)
-                    }
-                }
-
-                Section(header: Text("預計使用路線 (單一推薦・可更正記憶)")) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            if !selectedRouteName.isEmpty {
-                                Text(selectedRouteName)
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(.primary)
-                                if let pref = station.getPreferredRouteName(for: p.name), pref == selectedRouteName {
-                                    Text("使用者指定記憶路線")
-                                        .font(.caption2)
-                                        .foregroundColor(.purple)
-                                } else {
-                                    Text("系統最佳推薦路線")
-                                        .font(.caption2)
-                                        .foregroundColor(.green)
-                                }
-                            } else {
-                                Text("資料庫無匹配路線 (開跑將瞬移至中心)")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-
-                        Spacer()
-
-                        Menu {
-                            Section(header: Text("更正使用路線 (自動記憶)")) {
-                                ForEach(station.findMatchingRoutes(for: p)) { item in
-                                    Button(action: {
-                                        selectedRouteName = item.route.name
-                                        station.setPreferredRouteName(item.route.name, for: p.name)
-                                        session.showToast("已更正並記住【\(p.name)】使用路線為【\(item.route.name)】")
-                                    }) {
-                                        HStack {
-                                            Text(item.route.name)
-                                            if item.isHarvestRecommended {
-                                                Text("（推薦）")
-                                            }
-                                        }
-                                    }
-                                }
-                                Divider()
-                                ForEach(SavedDatabaseStore.shared.savedRoutes) { r in
-                                    Button(action: {
-                                        selectedRouteName = r.name
-                                        station.setPreferredRouteName(r.name, for: p.name)
-                                        session.showToast("已更正並記住【\(p.name)】使用路線為【\(r.name)】")
-                                    }) {
-                                        Text(r.name)
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: "pencil.circle.fill")
-                                Text("更正")
-                            }
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.orange)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.orange.opacity(0.12))
-                            .cornerRadius(6)
-                        }
-                    }
-                }
-
-                Section {
-                    // 1. 瞬移至此
-                    if let coord = p.coordinate {
-                        Button(action: {
-                            session.teleport(to: coord, label: p.name)
-                            isSlottingSheetPresented = false
-                            dismiss()
-                        }) {
-                            HStack {
-                                Image(systemName: "location.fill")
-                                    .foregroundColor(.blue)
-                                Text("瞬移至此花田")
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                    }
-
-                    // 2. 一鍵卡位
-                    Button(action: {
-                        submitSlotting(point: p, startCruise: false)
-                    }) {
-                        HStack {
-                            Image(systemName: "person.badge.shield.checkmark.fill")
-                                .foregroundColor(.green)
-                            Text(isSubmittingSlot ? "正在卡位..." : "一鍵卡位 (保留花田)")
-                                .foregroundColor(.green)
-                                .bold()
-                        }
-                    }
-                    .disabled(isSubmittingSlot)
-
-                    // 3. 一鍵卡位並自動開跑巡航
-                    Button(action: {
-                        submitSlotting(point: p, startCruise: true)
-                    }) {
-                        HStack {
-                            Image(systemName: "play.circle.fill")
-                                .foregroundColor(.orange)
-                            Text(isSubmittingSlot ? "正在處理..." : "一鍵卡位並開跑巡航")
-                                .foregroundColor(.orange)
-                                .bold()
-                        }
-                    }
-                    .disabled(isSubmittingSlot)
-                }
-            }
-            .navigationTitle(p.name)
-            .navigationBarItems(trailing: Button("關閉") { isSlottingSheetPresented = false })
-            .onAppear {
-                let name = station.stationDisplayName
-                self.inputNickname = !name.isEmpty ? name : station.stationEmail
-                self.inputRemark = ""
-                let matches = station.findMatchingRoutes(for: p)
-                let pref = station.getPreferredRouteName(for: p.name)
-                let best = matches.first(where: { $0.route.name == pref }) ?? matches.first
-                self.selectedRouteName = best?.route.name ?? (pref ?? "")
-            }
-        }
-    }
-
-    private func submitSlotting(point: FlowerStationPoint, startCruise: Bool) {
-        guard !inputNickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            session.showToast("請輸入卡位暱稱")
-            return
-        }
-
-        isSubmittingSlot = true
-        let nickname = inputNickname.trimmingCharacters(in: .whitespacesAndNewlines)
-        let remark = inputRemark.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        station.occupySpot(pointIndex: point.index, pointName: point.name, planterNickname: nickname, durationHours: 23.0, isHidden: false, remark: remark) { success, msg in
-            isSubmittingSlot = false
-            if success {
-                session.showToast("已成功卡位【\(point.name)】！")
-                isSlottingSheetPresented = false
-
-                if startCruise {
-                    if !self.selectedRouteName.isEmpty,
-                       let chosenRoute = SavedDatabaseStore.shared.savedRoutes.first(where: { $0.name == self.selectedRouteName }) {
-                        self.station.setPreferredRouteName(chosenRoute.name, for: point.name)
-                        // 以「繞圈種花」模式 (executionMode = 1) 啟動巡航
-                        self.session.startFlowerRoute(
-                            name: chosenRoute.name,
-                            basePoints: chosenRoute.nodes,
-                            loops: 0,
-                            settings: self.session.flowerSettings
-                        )
-                        SavedDatabaseStore.shared.useRoute(name: chosenRoute.name)
-                        self.session.showToast("已卡位並啟動【\(chosenRoute.name)】繞圈種花巡航！")
-                    } else if let coord = point.coordinate {
-                        self.session.teleport(to: coord, label: point.name)
-                        SavedDatabaseStore.shared.addTeleportHistory(
-                            lat: coord.latitude,
-                            lng: coord.longitude,
-                            label: "觀測站【\(point.name)】"
-                        )
-                        self.session.showToast("已卡位並瞬移至【\(point.name)】花田中心")
-                    }
-                    dismiss()
-                }
-            } else {
-                session.showToast("卡位失敗：\(msg ?? "連線逾時")")
-            }
-        }
-    }
 }

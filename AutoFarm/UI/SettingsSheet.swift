@@ -438,18 +438,16 @@ public struct SettingsSheet: View {
                     }
                     .foregroundColor(.orange)
 
-                    Button(action: {
-                        isDeleteAccountAlertPresented = true
-                    }) {
-                        HStack {
-                            Spacer()
-                            Image(systemName: "trash.fill")
-                            Text("刪除此帳號")
-                                .fontWeight(.bold)
-                            Spacer()
-                        }
+                    HoldToConfirmButton(
+                        title: "長按以確認刪除此帳號",
+                        icon: "trash.fill",
+                        color: .red,
+                        holdDuration: 1.0
+                    ) {
+                        dismiss()
+                        session.deleteAccount()
                     }
-                    .foregroundColor(.red)
+                    .padding(.vertical, 4)
                 }
             }
             .navigationTitle("連線設定")

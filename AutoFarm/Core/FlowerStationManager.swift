@@ -573,7 +573,9 @@ public final class FlowerStationManager: ObservableObject {
         guard !matureList.isEmpty else { return }
         let content = UNMutableNotificationContent()
         content.title = "花田大果實成熟通知"
-        let names = matureList.prefix(3).map { $0.name }.joined(separator: "、")
+        let names = matureList.prefix(3).map { flower in
+            flower.remark.isEmpty ? flower.name : "\(flower.name) (\(flower.remark))"
+        }.joined(separator: "、")
         content.body = "目前有 \(matureList.count) 處花田大果實成熟可收取（\(names)\(matureList.count > 3 ? " 等" : "")）"
         content.sound = nil
         let request = UNNotificationRequest(

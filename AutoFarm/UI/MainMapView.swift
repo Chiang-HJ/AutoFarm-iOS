@@ -4,18 +4,22 @@ import UIKit
 
 public struct MainMapView: UIViewRepresentable {
     @ObservedObject var session = AutoFarmSession.shared
+    @ObservedObject var station = FlowerStationManager.shared
     var onLongPress: ((CLLocationCoordinate2D) -> Void)?
     var onSelectWaypoint: ((Int) -> Void)?
     var onTapCurrentLocation: (() -> Void)?
+    var onSelectStationPoint: ((FlowerStationPoint) -> Void)?
 
     public init(
         onLongPress: ((CLLocationCoordinate2D) -> Void)? = nil,
         onSelectWaypoint: ((Int) -> Void)? = nil,
-        onTapCurrentLocation: (() -> Void)? = nil
+        onTapCurrentLocation: (() -> Void)? = nil,
+        onSelectStationPoint: ((FlowerStationPoint) -> Void)? = nil
     ) {
         self.onLongPress = onLongPress
         self.onSelectWaypoint = onSelectWaypoint
         self.onTapCurrentLocation = onTapCurrentLocation
+        self.onSelectStationPoint = onSelectStationPoint
     }
 
     public func makeUIView(context: Context) -> MKMapView {
@@ -27,6 +31,9 @@ public struct MainMapView: UIViewRepresentable {
 
         let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
         mapView.addGestureRecognizer(longPress)
+
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        mapView.addGestureRecognizer(tapGesture)
 
         let initialCenter = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
         let region = MKCoordinateRegion(center: initialCenter, latitudinalMeters: 500, longitudinalMeters: 500)
@@ -167,6 +174,47 @@ public struct MainMapView: UIViewRepresentable {
                 context.coordinator.currentCircles = newCircles
             }
         }
+
+        // 7. 觀測站花田圖層同步：在地圖上直接顯示印字頭花田之多邊形邊界與名牌標記
+        let indiaPoints = station.allPoints.filter { $0.name.hasPrefix("印") }
+        if context.coordinator.cachedStationPointsCount != indiaPoints.count ||
+           context.coordinator.cachedStationLastUpdate != station.lastSyncTime {
+            context.coordinator.cachedStationPointsCount = indiaPoints.count
+            context.coordinator.cachedStationLastUpdate = station.lastSyncTime
+
+            // 移除舊花田圖層
+            let oldStationOverlays = mapView.overlays.filter { $0 is StationPolygon || $0 is StationCircle }
+            mapView.removeOverlays(oldStationOverlays)
+            let oldStationAnnotations = mapView.annotations.filter { $0 is StationBadgeAnnotation }
+            mapView.removeAnnotations(oldStationAnnotations)
+
+            var newOverlays: [MKOverlay] = []
+            var newAnnotations: [MKAnnotation] = []
+
+            for pt in indiaPoints {
+                let polygonCoords = pt.polygonBoundaryCoordinates
+                if polygonCoords.count >= 3 {
+                    var coords = polygonCoords
+                    let polygon = StationPolygon(coordinates: &coords, count: coords.count, point: pt, polygonCoordinates: polygonCoords)
+                    newOverlays.append(polygon)
+                } else if let coord = pt.coordinate {
+                    let circle = StationCircle(center: coord, radius: 26.0, point: pt)
+                    newOverlays.append(circle)
+                }
+
+                if let centerCoord = pt.centerCoordinate {
+                    let badge = StationBadgeAnnotation(point: pt, coordinate: centerCoord)
+                    newAnnotations.append(badge)
+                }
+            }
+
+            if !newOverlays.isEmpty {
+                mapView.addOverlays(newOverlays)
+            }
+            if !newAnnotations.isEmpty {
+                mapView.addAnnotations(newAnnotations)
+            }
+        }
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -190,6 +238,10 @@ public struct MainMapView: UIViewRepresentable {
         var cachedOverlayFlowerIndex: Int = -1
         var cachedOverlayBaseCount: Int = -1
 
+        // 快取觀測站花田圖層
+        var cachedStationPointsCount: Int = -1
+        var cachedStationLastUpdate: Date? = nil
+
         init(_ parent: MainMapView) {
             self.parent = parent
         }
@@ -202,7 +254,29 @@ public struct MainMapView: UIViewRepresentable {
         }
 
         public func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            if let polyline = overlay as? MKPolyline {
+            if let stationPoly = overlay as? StationPolygon {
+                let renderer = MKPolygonRenderer(polygon: stationPoly)
+                if stationPoly.point.isCounting {
+                    renderer.fillColor = UIColor.systemRed.withAlphaComponent(0.18)
+                    renderer.strokeColor = UIColor.systemRed.withAlphaComponent(0.7)
+                } else {
+                    renderer.fillColor = UIColor.systemGreen.withAlphaComponent(0.18)
+                    renderer.strokeColor = UIColor.systemGreen.withAlphaComponent(0.7)
+                }
+                renderer.lineWidth = 1.5
+                return renderer
+            } else if let stationCircle = overlay as? StationCircle {
+                let renderer = MKCircleRenderer(circle: stationCircle)
+                if stationCircle.point.isCounting {
+                    renderer.fillColor = UIColor.systemRed.withAlphaComponent(0.18)
+                    renderer.strokeColor = UIColor.systemRed.withAlphaComponent(0.7)
+                } else {
+                    renderer.fillColor = UIColor.systemGreen.withAlphaComponent(0.18)
+                    renderer.strokeColor = UIColor.systemGreen.withAlphaComponent(0.7)
+                }
+                renderer.lineWidth = 1.5
+                return renderer
+            } else if let polyline = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = UIColor.systemBlue
                 renderer.lineWidth = 3.5
@@ -240,6 +314,22 @@ public struct MainMapView: UIViewRepresentable {
                 return view
             }
 
+            // 觀測站花田名牌標記
+            if let badge = annotation as? StationBadgeAnnotation {
+                let identifier = "StationBadgeAnnotationMarker"
+                var view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+                if view == nil {
+                    view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                    view?.canShowCallout = false
+                } else {
+                    view?.annotation = annotation
+                }
+                view?.glyphText = badge.point.name.replacingOccurrences(of: "印", with: "")
+                view?.markerTintColor = badge.point.isCounting ? .systemRed : .systemGreen
+                view?.displayPriority = .defaultLow
+                return view
+            }
+
             // 航點數字球 (對齊安卓：花苞或航點編號 1, 2, 3...)
             if let wp = annotation as? WaypointAnnotation {
                 let identifier = "WaypointAnnotationMarker"
@@ -272,10 +362,50 @@ public struct MainMapView: UIViewRepresentable {
             if let pointAnno = view.annotation as? MKPointAnnotation, pointAnno == currentLocationAnnotation {
                 mapView.deselectAnnotation(view.annotation, animated: false)
                 parent.onTapCurrentLocation?()
+            } else if let badge = view.annotation as? StationBadgeAnnotation {
+                mapView.deselectAnnotation(view.annotation, animated: false)
+                parent.onSelectStationPoint?(badge.point)
             } else if let wp = view.annotation as? WaypointAnnotation {
                 mapView.deselectAnnotation(view.annotation, animated: false)
                 parent.onSelectWaypoint?(wp.index)
             }
+        }
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard let mapView = gesture.view as? MKMapView else { return }
+            let touchPoint = gesture.location(in: mapView)
+            let touchCoord = mapView.convert(touchPoint, toCoordinateFrom: mapView)
+
+            for overlay in mapView.overlays {
+                if let polygon = overlay as? StationPolygon {
+                    if pointInPolygon(point: touchCoord, polygon: polygon.polygonCoordinates) {
+                        parent.onSelectStationPoint?(polygon.point)
+                        return
+                    }
+                } else if let circle = overlay as? StationCircle {
+                    let dist = EngineMath.getDistance(lat1: touchCoord.latitude, lon1: touchCoord.longitude, lat2: circle.coordinate.latitude, lon2: circle.coordinate.longitude)
+                    if dist <= circle.radius {
+                        parent.onSelectStationPoint?(circle.point)
+                        return
+                    }
+                }
+            }
+        }
+
+        private func pointInPolygon(point: CLLocationCoordinate2D, polygon: [CLLocationCoordinate2D]) -> Bool {
+            guard polygon.count >= 3 else { return false }
+            var isInside = false
+            var j = polygon.count - 1
+            for i in 0..<polygon.count {
+                if (polygon[i].longitude < point.longitude && polygon[j].longitude >= point.longitude ||
+                    polygon[j].longitude < point.longitude && polygon[i].longitude >= point.longitude) {
+                    if (polygon[i].latitude + (point.longitude - polygon[i].longitude) / (polygon[j].longitude - polygon[i].longitude) * (polygon[j].latitude - polygon[i].latitude) < point.latitude) {
+                        isInside.toggle()
+                    }
+                }
+                j = i
+            }
+            return isInside
         }
     }
 }

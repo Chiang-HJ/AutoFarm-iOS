@@ -26,6 +26,10 @@ public struct ContentView: View {
     // 點選地圖數字球選定之航點索引 (對齊安卓：從此點出發 / 瞬移 / 刪除 / 複製)
     @State private var selectedWaypointIndex: Int? = nil
 
+    // 主地圖點選花田觀測站卡位彈窗
+    @State private var selectedStationPointForSlot: FlowerStationPoint? = nil
+    @State private var isStationSlotSheetPresented: Bool = false
+
     // 自由拖曳虛擬搖桿開關位置 (持久化記憶於 UserDefaults)
     @State private var joystickPositionOffset: CGSize = {
         let x = UserDefaults.standard.double(forKey: "AutoFarm_Joystick_OffsetX")
@@ -67,6 +71,13 @@ public struct ContentView: View {
                     self.isSavingCoordNamePrompt = false
                     self.selectedWaypointIndex = nil
                     self.selectedSingleCoord = CLLocationCoordinate2D(latitude: session.currentLat, longitude: session.currentLng)
+                },
+                onSelectStationPoint: { point in
+                    hideKeyboard()
+                    self.selectedWaypointIndex = nil
+                    self.selectedSingleCoord = nil
+                    self.selectedStationPointForSlot = point
+                    self.isStationSlotSheetPresented = true
                 }
             )
             .edgesIgnoringSafeArea(.all)
@@ -253,6 +264,13 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isFlowerStationMapPresented) {
             FlowerStationMapView()
+        }
+        .sheet(isPresented: $isStationSlotSheetPresented) {
+            if let p = selectedStationPointForSlot {
+                StationQuickSlotSheet(point: p) {
+                    self.isStationSlotSheetPresented = false
+                }
+            }
         }
         .alert(item: $session.handshakeAlertInfo) { info in
             Alert(

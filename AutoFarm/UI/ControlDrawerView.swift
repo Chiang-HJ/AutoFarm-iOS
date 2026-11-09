@@ -120,16 +120,7 @@ public struct ControlDrawerView: View {
 
             // 展開時顯示資料庫內容
             if isExpanded {
-                VStack(spacing: 10) {
-                    // 三分類選擇器 (座標資料庫 / 路徑資料庫 / 歷史紀錄)
-                    Picker("資料庫類別", selection: $selectedTab) {
-                        Text("座標 (\(db.savedLocations.count))").tag(0)
-                        Text("路線 (\(db.savedRoutes.count))").tag(1)
-                        Text("歷史紀錄 (\(db.locationHistory.count))").tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16)
-
+                VStack(spacing: 8) {
                     if selectedTab == 0 {
                         locationsSection
                     } else if selectedTab == 1 {
@@ -137,6 +128,9 @@ public struct ControlDrawerView: View {
                     } else {
                         locationHistorySection
                     }
+
+                    // 最下方的三個 Tab 導覽列
+                    bottomTabBar
                 }
                 .transition(.opacity)
             }
@@ -698,40 +692,26 @@ public struct ControlDrawerView: View {
                     .cornerRadius(8)
                 }
 
-                // 停止路線 (保留當前虛擬位置)
-                Button(action: {
+                // 停止路線 (長按蓄力確認，保留當前虛擬位置)
+                HoldToConfirmButton(
+                    title: "停止路線",
+                    icon: "stop.fill",
+                    color: .red,
+                    duration: 0.8
+                ) {
                     hideKeyboard()
                     session.stopRoute()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12))
-                        Text("停止路線")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(Color.red.opacity(0.15))
-                    .foregroundColor(.red)
-                    .cornerRadius(8)
                 }
 
-                // 恢復真實 GPS (重置 locationd)
-                Button(action: {
+                // 恢復真實 GPS (長按蓄力確認，重置 locationd)
+                HoldToConfirmButton(
+                    title: "還原GPS",
+                    icon: "location.slash.fill",
+                    color: .red,
+                    duration: 0.8
+                ) {
                     hideKeyboard()
                     session.stopMocking()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "location.slash.fill")
-                            .font(.system(size: 12))
-                        Text("還原GPS")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(Color.red.opacity(0.15))
-                    .foregroundColor(.red)
-                    .cornerRadius(8)
                 }
             }
         }
@@ -739,6 +719,43 @@ public struct ControlDrawerView: View {
         .background(Color(UIColor.secondarySystemBackground).opacity(0.85))
         .cornerRadius(14)
         .padding(.horizontal, 16)
+    }
+
+    // MARK: - 最底部三 Tab 導覽列
+    private var bottomTabBar: some View {
+        HStack(spacing: 6) {
+            tabButton(title: "座標", count: db.savedLocations.count, icon: "location.fill", tabIndex: 0)
+            tabButton(title: "路線", count: db.savedRoutes.count, icon: "point.topleft.down.curvedto.point.bottomright.up", tabIndex: 1)
+            tabButton(title: "歷史紀錄", count: db.locationHistory.count, icon: "clock.arrow.circlepath", tabIndex: 2)
+        }
+        .padding(4)
+        .background(Color(UIColor.secondarySystemBackground).opacity(0.95))
+        .cornerRadius(12)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+
+    private func tabButton(title: String, count: Int, icon: String, tabIndex: Int) -> some View {
+        let isSelected = selectedTab == tabIndex
+        return Button(action: {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                selectedTab = tabIndex
+            }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                Text("\(title) (\(count))")
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .background(isSelected ? Color.blue : Color.clear)
+            .foregroundColor(isSelected ? .white : .secondary)
+            .cornerRadius(9)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
         .alert("輸入點位數字跳點", isPresented: $showJumpPointAlert) {
             TextField("點位編號 (1 ~ \(session.displayWaypoints.count))", text: $jumpPointInputText)
                 .keyboardType(.numberPad)

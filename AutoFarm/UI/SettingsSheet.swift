@@ -442,7 +442,7 @@ public struct SettingsSheet: View {
                         title: "長按以確認刪除此帳號",
                         icon: "trash.fill",
                         color: .red,
-                        holdDuration: 1.0
+                        duration: 1.0
                     ) {
                         dismiss()
                         session.deleteAccount()

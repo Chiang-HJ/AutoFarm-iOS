@@ -719,6 +719,21 @@ public struct ControlDrawerView: View {
         .background(Color(UIColor.secondarySystemBackground).opacity(0.85))
         .cornerRadius(14)
         .padding(.horizontal, 16)
+        .alert("輸入點位數字跳點", isPresented: $showJumpPointAlert) {
+            TextField("點位編號 (1 ~ \(session.displayWaypoints.count))", text: $jumpPointInputText)
+                .keyboardType(.numberPad)
+            Button("確定跳轉") {
+                if let num = Int(jumpPointInputText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                   num >= 1, num <= session.displayWaypoints.count {
+                    session.jumpToWaypoint(index: num - 1)
+                } else {
+                    session.showToast("請輸入 1 ~ \(session.displayWaypoints.count) 之間的點位編號")
+                }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("有效範圍：1 ~ \(session.displayWaypoints.count) 點")
+        }
     }
 
     // MARK: - 最底部三 Tab 導覽列
@@ -755,22 +770,6 @@ public struct ControlDrawerView: View {
             .cornerRadius(9)
         }
         .buttonStyle(PlainButtonStyle())
-    }
-        .alert("輸入點位數字跳點", isPresented: $showJumpPointAlert) {
-            TextField("點位編號 (1 ~ \(session.displayWaypoints.count))", text: $jumpPointInputText)
-                .keyboardType(.numberPad)
-            Button("確定跳轉") {
-                if let num = Int(jumpPointInputText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                   num >= 1, num <= session.displayWaypoints.count {
-                    session.jumpToWaypoint(index: num - 1)
-                } else {
-                    session.showToast("請輸入 1 ~ \(session.displayWaypoints.count) 之間的點位編號")
-                }
-            }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("有效範圍：1 ~ \(session.displayWaypoints.count) 點")
-        }
     }
 
     // MARK: - 座標庫視圖 (支援置頂、標籤、點擊直接瞬移方案 A)

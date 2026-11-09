@@ -80,8 +80,10 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
     private weak var volumeView: MPVolumeView?
     private weak var volumeSlider: UISlider?
     private var lastTriggerTime: TimeInterval = 0
-    private var userOriginalVolume: Float = 0.0
-    private var userBaselineVolume: Float = 0.02
+    private var lastVolumeChangeTime: TimeInterval = 0
+    private var consecutivePressCount: Int = 0
+    private var lastDirectionIsUp: Bool = false
+    private var currentUserVolume: Float = 0.5
     private var isResetting: Bool = false
 
     private override init() {
@@ -147,44 +149,35 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
     public func startMonitoring() {
         guard !isObserving else { return }
 
-        // 設置為 ambient + mixWithOthers，保證 100% 靜音且不打擾其他正在播放的聲音
+        // 使用 .playback + .mixWithOthers，與 SilentAudioKeepAlive 保持一致，確保在背景進入皮克敏畫面時仍可接收音量事件
         do {
-            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
         } catch {
-            print("Audio session active error: \(error)")
+            print("[VolumeButtonManager] Audio session active error: \(error)")
         }
 
-        let sysVol = AVAudioSession.sharedInstance().outputVolume
-        self.userOriginalVolume = sysVol
-
-        // 計算基準點：
-        // 若使用者原本為 0 音量（靜音），設置 0.02（極微量、DAC 無聲音輸出，但足以讓硬體音量減鍵產生下降至 0.00 之感測）
-        // 若使用者原本為滿音量 1.0，設置 0.98（使音量加鍵足以產生上升至 1.00 之感測）
-        // 其餘皆完美維持使用者原設定之音量
-        if sysVol < 0.02 {
-            self.userBaselineVolume = 0.02
-        } else if sysVol > 0.98 {
-            self.userBaselineVolume = 0.98
-        } else {
-            self.userBaselineVolume = sysVol
-        }
+        self.currentUserVolume = AVAudioSession.sharedInstance().outputVolume
 
         AVAudioSession.sharedInstance().addObserver(self, forKeyPath: "outputVolume", options: [.new, .old], context: nil)
         isObserving = true
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            self.setSystemVolume(self.userBaselineVolume)
-        }
     }
 
     public func stopMonitoring() {
         guard isObserving else { return }
         AVAudioSession.sharedInstance().removeObserver(self, forKeyPath: "outputVolume")
         isObserving = false
+        restoreExactVolumeOnRouteStop()
+    }
 
-        // 停止時將音量百分之百精確還原至使用者進入前的原始音量 (包括 0 音量)
-        self.setSystemVolume(self.userOriginalVolume)
+    /// 在路線停止時將微調邊界還原至純粹 0.0 或 1.0
+    public func restoreExactVolumeOnRouteStop() {
+        if currentUserVolume <= 0.005 {
+            setSystemVolume(0.0)
+        } else if currentUserVolume >= 0.995 {
+            setSystemVolume(1.0)
+        }
     }
 
     public override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
@@ -192,28 +185,83 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
         if isResetting { return }
         guard let newVolume = change[.newKey] as? Float else { return }
 
-        // 若音量等於基準點（重設時觸發之回調），完全忽略
-        if abs(newVolume - userBaselineVolume) < 0.008 { return }
-
         let now = Date().timeIntervalSinceReferenceDate
-        // 硬體防抖閥值 0.40 秒，杜絕硬體一次按壓重複觸發 (+2)
-        guard now - lastTriggerTime > 0.40 else { return }
+        let session = AutoFarmSession.shared
+
+        // 1. 條件過濾：若未開啟音量控制、無運行中路線或處於暫停/未模擬狀態，完全不攔截，正常調整音量
+        let isRouteActive = isEnabled && session.isSimulatingLocation && !session.isRoutePaused && !session.routePoints.isEmpty
+        guard isRouteActive else {
+            self.currentUserVolume = newVolume
+            return
+        }
+
+        // 2. 若系統有其他音樂/影片正在播放 (如 YouTube、Apple Music、Podcast)，完全不攔截，尊重使用者正常音量調整需求
+        if AVAudioSession.sharedInstance().isOtherAudioPlaying {
+            self.currentUserVolume = newVolume
+            return
+        }
+
+        let delta = abs(newVolume - currentUserVolume)
+
+        // 3. 忽略極微小抖動
+        if delta < 0.005 { return }
+
+        // 4. 若滑動控制中心或設定滑桿 (變化量超過 0.085)，屬於手動調整音量，直接接受新音量，不重設也不跳點
+        if delta > 0.085 {
+            self.currentUserVolume = newVolume
+            return
+        }
+
+        let isUp = (newVolume > currentUserVolume)
+        let isDown = (newVolume < currentUserVolume)
+
+        // 5. 連續按壓偵測：若在 0.5 秒內朝同一方向連續按壓，代表使用者正在主畫面或其他 App 連續調整音量，放行並更新基準
+        let timeSinceLastPress = now - lastVolumeChangeTime
+        lastVolumeChangeTime = now
+
+        if timeSinceLastPress < 0.5 && (isUp == lastDirectionIsUp) {
+            consecutivePressCount += 1
+        } else {
+            consecutivePressCount = 1
+            lastDirectionIsUp = isUp
+        }
+
+        if consecutivePressCount >= 2 {
+            self.currentUserVolume = newVolume
+            return
+        }
+
+        // 6. 硬體按鍵防抖：0.38 秒內不重複觸發動作 (杜絕硬體一次按壓產生 +2 點位跳躍)
+        guard now - lastTriggerTime > 0.38 else { return }
         lastTriggerTime = now
 
-        let isUp = (newVolume > userBaselineVolume)
-        let isDown = (newVolume < userBaselineVolume)
+        let targetVolumeToRestore = self.currentUserVolume
 
         DispatchQueue.main.async {
+            // 執行跳點動作 (下一點 / 上一點)
             if isUp {
                 self.executeAction(self.volumeUpAction)
             } else if isDown {
                 self.executeAction(self.volumeDownAction)
             }
 
-            // 重設回基準點，使加減鍵永遠可持續感測，且保持使用者原音量
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            // 保持使用者原音量：將音量精確還原回按鍵前的原數值，絕不強制固定特定音量
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.isResetting = true
-                self.setSystemVolume(self.userBaselineVolume)
+
+                // 特殊邊界保護：若原音量為 0 (靜音)，維持極微小 0.005 (DAC 靜音無聲，但可使下次音量減鍵產生 0.00 之下降事件)
+                // 若原音量為 1.0 (滿格)，維持 0.995 (可使下次音量加鍵產生 1.00 之上升事件)
+                let restoreVal: Float
+                if targetVolumeToRestore <= 0.005 {
+                    restoreVal = 0.005
+                } else if targetVolumeToRestore >= 0.995 {
+                    restoreVal = 0.995
+                } else {
+                    restoreVal = targetVolumeToRestore
+                }
+
+                self.setSystemVolume(restoreVal)
+
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     self.isResetting = false
                 }

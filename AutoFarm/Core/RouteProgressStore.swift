@@ -100,16 +100,26 @@ public final class RouteProgressStore {
            !dict.isEmpty {
             return dict
         }
-        // 2. 備援：若 UserDefaults 遺失或閃退，從本機沙盒檔案讀取
+        // 2. 備援：若 UserDefaults 遺失或意外退出，從本機沙盒檔案讀取
         if let url = backupFileUrl,
            let fileData = try? Data(contentsOf: url),
-           let dict = try? JSONDecoder().decode([String: RouteProgress].self, from: fileData) {
+           let dict = try? JSONDecoder().decode([String: RouteProgress].self, from: fileData),
+           !dict.isEmpty {
             return dict
         }
         return [:]
     }
 
     private static func saveAllProgressDict(_ dict: [String: RouteProgress]) {
+        if dict.isEmpty {
+            UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+            UserDefaults.standard.synchronize()
+            if let url = backupFileUrl {
+                try? FileManager.default.removeItem(at: url)
+            }
+            return
+        }
+
         guard let data = try? JSONEncoder().encode(dict) else { return }
         UserDefaults.standard.set(data, forKey: userDefaultsKey)
         UserDefaults.standard.synchronize()

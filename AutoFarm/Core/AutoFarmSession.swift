@@ -121,6 +121,7 @@ public final class AutoFarmSession: ObservableObject {
     private var lastPushTime: TimeInterval = 0.0
     private var lastUiCoordDispatchTime: TimeInterval = 0.0
     private var waitAccumulatedMs: Double = 0.0
+    private var lastAutoSaveTime: TimeInterval = 0.0
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     // Engine State: 嚴格於 engineQueue 維護連續精確座標，杜絕因主執行緒節流更新被丟棄導致的 1/4 假性降速
@@ -187,13 +188,34 @@ public final class AutoFarmSession: ObservableObject {
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillTerminate),
+            name: UIApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     @objc private func handleAppDidEnterBackground() {
+        autoSaveCurrentProgress()
         guard isSimulatingLocation else { return }
         startBackgroundTask()
         pushCurrentLocation()
         SilentAudioKeepAlive.shared.ensurePlaying()
+    }
+
+    @objc private func handleAppWillResignActive() {
+        autoSaveCurrentProgress()
+    }
+
+    @objc private func handleAppWillTerminate() {
+        autoSaveCurrentProgress()
     }
 
     @objc private func handleAppWillEnterForeground() {
@@ -620,8 +642,8 @@ public final class AutoFarmSession: ObservableObject {
             basePoints: originalBasePoints,
             executionMode: executionMode,
             fruitWalkDistance: fruitWalkDistance,
-            interruptedLat: currentLat,
-            interruptedLng: currentLng
+            interruptedLat: engineLat != 0 ? engineLat : currentLat,
+            interruptedLng: engineLng != 0 ? engineLng : currentLng
         )
         RouteProgressStore.saveProgress(progress)
     }
@@ -679,8 +701,8 @@ public final class AutoFarmSession: ObservableObject {
             basePoints: originalBasePoints,
             executionMode: executionMode,
             fruitWalkDistance: fruitWalkDistance,
-            interruptedLat: currentLat,
-            interruptedLng: currentLng
+            interruptedLat: engineLat != 0 ? engineLat : currentLat,
+            interruptedLng: engineLng != 0 ? engineLng : currentLng
         )
         RouteProgressStore.saveProgress(progress)
         showToast("已暫存【\(progress.routeName)】進度：第 \(progress.currentLoop + 1) 圈 第 \(progress.currentRouteIndex)/\(progress.totalPoints) 點")
@@ -691,6 +713,8 @@ public final class AutoFarmSession: ObservableObject {
     public func resumeProgress(_ progress: RouteProgress) {
         ensureHandshakeVerified(actionName: "接續進度") { [weak self] in
             guard let self = self else { return }
+            RouteProgressStore.clearProgress(for: progress.routeName)
+            RouteProgressStore.clearAll()
             self.originalBasePoints = progress.basePoints ?? []
             self.routePoints = progress.routePoints
             self.activeRouteName = progress.routeName
@@ -744,6 +768,7 @@ public final class AutoFarmSession: ObservableObject {
         self.waitAccumulatedMs = 0.0
         self.etaString = "--:--"
         self.detourDepartureCoord = nil
+        VolumeButtonManager.shared.restoreExactVolumeOnRouteStop()
         showToast("已停止路線 (維持當前虛擬位置)")
     }
 
@@ -988,6 +1013,14 @@ public final class AutoFarmSession: ObservableObject {
             if now - lastPushTime >= 1.0 {
                 lastPushTime = now
                 pushCurrentLocation(lat: self.engineLat, lng: self.engineLng)
+            }
+        }
+
+        // 定期自動保存最新巡航進度快照 (每 1.5 秒自動快照，杜絕使用者隨時滑掉 App 或閃退丟失中間步進)
+        if !routePoints.isEmpty && !isRoutePaused && (now - lastAutoSaveTime >= 1.5) {
+            lastAutoSaveTime = now
+            DispatchQueue.main.async { [weak self] in
+                self?.autoSaveCurrentProgress()
             }
         }
     }

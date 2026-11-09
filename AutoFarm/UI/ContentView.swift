@@ -210,6 +210,7 @@ public struct ContentView: View {
                     progress: resume,
                     onResume: {
                         session.resumeProgress(resume)
+                        RouteProgressStore.clearAll()
                         pendingResumeProgress = nil
                     },
                     onIgnoreAndClear: {

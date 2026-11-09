@@ -14,6 +14,7 @@ public struct ContentView: View {
     @State private var isDatabasePresented: Bool = false
     @State private var isFruitNoticeSheetPresented: Bool = false
     @State private var isBlockedMushroomPresented: Bool = false
+    @State private var isFlowerStationMapPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
@@ -115,6 +116,20 @@ public struct ContentView: View {
                                 .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
                         }
 
+                        // 花田觀測站總覽地圖
+                        Button(action: {
+                            hideKeyboard()
+                            self.isFlowerStationMapPresented = true
+                        }) {
+                            Image(systemName: "map.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(.green)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.secondarySystemBackground).opacity(0.92))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+                        }
+
                         // 目前位置單點選單
                         Button(action: {
                             hideKeyboard()
@@ -196,11 +211,8 @@ public struct ContentView: View {
                         session.resumeProgress(resume)
                         pendingResumeProgress = nil
                     },
-                    onRestart: {
+                    onIgnoreAndClear: {
                         RouteProgressStore.clearProgress(for: resume.routeName)
-                        pendingResumeProgress = nil
-                    },
-                    onDismiss: {
                         pendingResumeProgress = nil
                     }
                 )
@@ -231,6 +243,9 @@ public struct ContentView: View {
         }
         .sheet(isPresented: $isBlockedMushroomPresented) {
             BlockedMushroomView()
+        }
+        .sheet(isPresented: $isFlowerStationMapPresented) {
+            FlowerStationMapView()
         }
         .alert(item: $session.handshakeAlertInfo) { info in
             Alert(
@@ -529,9 +544,7 @@ public struct ContentView: View {
 
                     HStack(spacing: 8) {
                         Button(action: {
-                            db.addLocation(name: saveCoordNameInput, latitude: coord.latitude, longitude: coord.longitude)
-                            selectedSingleCoord = nil
-                            isSavingCoordNamePrompt = false
+                            saveSingleCoordWithGeocoding(coord: coord, andTeleport: false)
                         }) {
                             Text("僅儲存不定位")
                                 .font(.system(size: 12, weight: .bold))
@@ -543,10 +556,7 @@ public struct ContentView: View {
                         }
 
                         Button(action: {
-                            db.addLocation(name: saveCoordNameInput, latitude: coord.latitude, longitude: coord.longitude)
-                            session.teleport(to: coord.latitude, lng: coord.longitude)
-                            selectedSingleCoord = nil
-                            isSavingCoordNamePrompt = false
+                            saveSingleCoordWithGeocoding(coord: coord, andTeleport: true)
                         }) {
                             Text("儲存並同時瞬移")
                                 .font(.system(size: 12, weight: .bold))
@@ -728,6 +738,36 @@ public struct ContentView: View {
         .background(Color(UIColor.systemBackground).opacity(0.96))
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.15), radius: 6, x: 0, y: 3)
+    }
+
+    private func saveSingleCoordWithGeocoding(coord: CLLocationCoordinate2D, andTeleport: Bool) {
+        let input = saveCoordNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !input.isEmpty {
+            db.addLocation(name: input, latitude: coord.latitude, longitude: coord.longitude)
+            if andTeleport { session.teleport(to: coord.latitude, lng: coord.longitude, label: input) }
+            selectedSingleCoord = nil
+            isSavingCoordNamePrompt = false
+        } else {
+            let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+                let autoName: String
+                if let p = placemarks?.first {
+                    let road = p.thoroughfare ?? ""
+                    let subRoad = p.subThoroughfare ?? ""
+                    let area = p.subLocality ?? p.locality ?? ""
+                    let full = "\(area)\(road)\(subRoad)"
+                    autoName = !full.isEmpty ? full : (p.name ?? "自訂座標")
+                } else {
+                    autoName = "座標 (\(String(format: "%.4f", coord.latitude)), \(String(format: "%.4f", coord.longitude)))"
+                }
+                DispatchQueue.main.async {
+                    self.db.addLocation(name: autoName, latitude: coord.latitude, longitude: coord.longitude)
+                    if andTeleport { self.session.teleport(to: coord.latitude, lng: coord.longitude, label: autoName) }
+                    self.selectedSingleCoord = nil
+                    self.isSavingCoordNamePrompt = false
+                }
+            }
+        }
     }
 
     private func handleCoordinateSearch() {

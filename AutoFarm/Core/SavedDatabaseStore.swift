@@ -334,6 +334,15 @@ public final class SavedDatabaseStore: ObservableObject {
         }
     }
 
+    public func renameLocation(id: UUID, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let idx = savedLocations.firstIndex(where: { $0.id == id }) {
+            savedLocations[idx].name = trimmed
+            saveLocations()
+        }
+    }
+
     // MARK: - 路徑庫管理
     public func saveRoute(name: String, nodes: [RouteNode], tag: String = "", note: String = "") {
         guard !nodes.isEmpty else { return }
@@ -366,6 +375,15 @@ public final class SavedDatabaseStore: ObservableObject {
     public func updateRouteNote(id: UUID, note: String) {
         if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
             savedRoutes[idx].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            saveRoutes()
+        }
+    }
+
+    public func renameRoute(id: UUID, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
+            savedRoutes[idx].name = trimmed
             saveRoutes()
         }
     }

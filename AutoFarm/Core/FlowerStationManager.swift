@@ -3,6 +3,17 @@ import Combine
 import CoreLocation
 import SwiftUI
 
+// MARK: - 花田多邊形頂點坐標模型
+public struct HullPoint: Codable, Equatable {
+    public var lat: Double
+    public var lng: Double
+
+    public init(lat: Double, lng: Double) {
+        self.lat = lat
+        self.lng = lng
+    }
+}
+
 // MARK: - 花田觀測站點位模型
 public struct FlowerStationPoint: Identifiable, Codable, Equatable {
     public var id: String { String(index) }
@@ -21,6 +32,8 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
     public var occupierUid: String?
     public var remark: String
     public var customHours: Double?
+    public var hull: [HullPoint]?
+    public var seedlings: Int?
 
     public init(
         index: Int,
@@ -37,7 +50,9 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
         planter: String = "",
         occupierUid: String? = nil,
         remark: String = "",
-        customHours: Double? = nil
+        customHours: Double? = nil,
+        hull: [HullPoint]? = nil,
+        seedlings: Int? = nil
     ) {
         self.index = index
         self.name = name
@@ -54,6 +69,23 @@ public struct FlowerStationPoint: Identifiable, Codable, Equatable {
         self.occupierUid = occupierUid
         self.remark = remark
         self.customHours = customHours
+        self.hull = hull
+        self.seedlings = seedlings
+    }
+
+    /// 提取顯示於地圖與清單的精簡編號標籤 (如 印69A -> 69A, 印新14 -> 新14, 菲41 -> 41)
+    public var displayBadgeNumber: String {
+        var clean = name
+        for prefix in ["印新", "印", "菲", "花田", "花"] {
+            if clean.hasPrefix(prefix) {
+                clean = String(clean.dropFirst(prefix.count))
+                if prefix == "印新" {
+                    clean = "新" + clean
+                }
+                break
+            }
+        }
+        return clean.isEmpty ? String(index) : clean
     }
 
     /// 判斷目前是否處於「大果實已生成成熟」狀態（花開首小時內）
@@ -178,6 +210,24 @@ public final class FlowerStationManager: ObservableObject {
     private let kActiveCardKey = "FlowerStation_ActiveCard"
     private let kStationEmailKey = "FlowerStation_Email"
     private let kStationPasswordKey = "FlowerStation_Password"
+    private let kOfflinePointsKey = "FlowerStation_OfflinePointsCache"
+
+    public func loadCachedPoints() {
+        if let data = userDefaults.data(forKey: kOfflinePointsKey),
+           let cached = try? JSONDecoder().decode([FlowerStationPoint].self, from: data),
+           !cached.isEmpty {
+            self.allPoints = cached
+            self.matureFlowers = cached.filter { $0.isFruitMature }
+        }
+    }
+
+    public func getPreferredRouteName(for flowerName: String) -> String? {
+        userDefaults.string(forKey: "Station_RoutePref_\(flowerName)")
+    }
+
+    public func setPreferredRouteName(_ routeName: String, for flowerName: String) {
+        userDefaults.set(routeName, forKey: "Station_RoutePref_\(flowerName)")
+    }
     private let kStationUidKey = "FlowerStation_Uid"
     private let kStationTokenKey = "FlowerStation_IdToken"
     private let kStationRefreshTokenKey = "FlowerStation_RefreshToken"
@@ -187,6 +237,7 @@ public final class FlowerStationManager: ObservableObject {
     private init() {
         loadStoredCredentials()
         loadActiveCard()
+        loadCachedPoints()
         startPeriodicPolling()
     }
 
@@ -412,6 +463,9 @@ public final class FlowerStationManager: ObservableObject {
             URLSession.shared.dataTask(with: req) { data, _, error in
                 DispatchQueue.main.async { self.isSyncing = false }
                 guard let data = data, error == nil else {
+                    if self.allPoints.isEmpty {
+                        self.loadCachedPoints()
+                    }
                     DispatchQueue.main.async { completion?(self.allPoints) }
                     return
                 }
@@ -435,6 +489,10 @@ public final class FlowerStationManager: ObservableObject {
                 }
 
                 let mature = parsed.filter { $0.isFruitMature }
+
+                if let data = try? JSONEncoder().encode(parsed) {
+                    self.userDefaults.set(data, forKey: self.kOfflinePointsKey)
+                }
 
                 DispatchQueue.main.async {
                     self.allPoints = parsed
@@ -480,6 +538,21 @@ public final class FlowerStationManager: ObservableObject {
         let remark = raw["remark"] as? String ?? ""
         let customHours = raw["customHours"] as? Double
 
+        var hullPoints: [HullPoint]? = nil
+        if let rawHull = raw["hull"] as? [[String: Any]] {
+            hullPoints = rawHull.compactMap { dict in
+                guard let hLat = dict["lat"] as? Double, let hLng = dict["lng"] as? Double else { return nil }
+                return HullPoint(lat: hLat, lng: hLng)
+            }
+        } else if let rawHullArr = raw["hull"] as? [[Double]] {
+            hullPoints = rawHullArr.compactMap { arr in
+                guard arr.count >= 2 else { return nil }
+                return HullPoint(lat: arr[0], lng: arr[1])
+            }
+        }
+
+        let seedlings = raw["seedlings"] as? Int
+
         return FlowerStationPoint(
             index: index,
             name: name,
@@ -495,7 +568,9 @@ public final class FlowerStationManager: ObservableObject {
             planter: planter,
             occupierUid: occupierUid,
             remark: remark,
-            customHours: customHours
+            customHours: customHours,
+            hull: hullPoints,
+            seedlings: seedlings
         )
     }
 
@@ -640,7 +715,7 @@ public final class FlowerStationManager: ObservableObject {
                     DispatchQueue.main.async {
                         self.saveActiveCard(updatedCard)
                         self.fetchFlowerPoints()
-                        AutoFarmSession.shared.showToast("🌸 觀測站【\(card.pointName)】已自動開始開花倒數！")
+                        AutoFarmSession.shared.showToast("觀測站【\(card.pointName)】已自動開始開花倒數！")
                         completion?(true)
                     }
                 } else {
@@ -784,8 +859,13 @@ public final class FlowerStationManager: ObservableObject {
             }
         }
 
-        // 推薦收果實排最前面
+        // 推薦收果實排最前面，並優先排入使用者偏好指定路線
+        let prefName = getPreferredRouteName(for: flower.name)
         matches.sort { (a, b) -> Bool in
+            if let pref = prefName {
+                if a.route.name == pref && b.route.name != pref { return true }
+                if b.route.name == pref && a.route.name != pref { return false }
+            }
             if a.isHarvestRecommended != b.isHarvestRecommended {
                 return a.isHarvestRecommended && !b.isHarvestRecommended
             }

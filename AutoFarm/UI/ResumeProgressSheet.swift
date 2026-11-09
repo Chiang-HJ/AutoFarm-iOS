@@ -4,14 +4,12 @@ import UIKit
 public struct ResumeProgressSheet: View {
     let progress: RouteProgress
     var onResume: () -> Void
-    var onRestart: () -> Void
-    var onDismiss: () -> Void
+    var onIgnoreAndClear: () -> Void
 
-    public init(progress: RouteProgress, onResume: @escaping () -> Void, onRestart: @escaping () -> Void, onDismiss: @escaping () -> Void) {
+    public init(progress: RouteProgress, onResume: @escaping () -> Void, onIgnoreAndClear: @escaping () -> Void) {
         self.progress = progress
         self.onResume = onResume
-        self.onRestart = onRestart
-        self.onDismiss = onDismiss
+        self.onIgnoreAndClear = onIgnoreAndClear
     }
 
     public var body: some View {
@@ -22,7 +20,7 @@ public struct ResumeProgressSheet: View {
                 Text("偵測到未完成進度")
                     .font(.headline)
                 Spacer()
-                Button(action: onDismiss) {
+                Button(action: onIgnoreAndClear) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.gray)
                 }
@@ -54,13 +52,13 @@ public struct ResumeProgressSheet: View {
                 .fontWeight(.bold)
 
             HStack(spacing: 12) {
-                Button(action: onRestart) {
-                    Text("重新開始")
+                Button(action: onIgnoreAndClear) {
+                    Text("忽略並清除")
                         .font(.system(size: 14, weight: .medium))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                         .background(Color(UIColor.systemGray5))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.red)
                         .cornerRadius(10)
                 }
 

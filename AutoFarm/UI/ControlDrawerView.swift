@@ -57,6 +57,21 @@ public struct ControlDrawerView: View {
     @State private var showJumpPointAlert: Bool = false
     @State private var jumpPointInputText: String = ""
 
+    // 搜尋與排序
+    @State private var locationSearchText: String = ""
+    @State private var routeSearchText: String = ""
+    @State private var locationSortMode: DatabaseSortMode = .pinFirst
+    @State private var routeSortMode: DatabaseSortMode = .pinFirst
+
+    // 重新命名
+    @State private var isRenamePresented: Bool = false
+    @State private var renameTargetId: UUID? = nil
+    @State private var renameTargetIsRoute: Bool = false
+    @State private var renameInputText: String = ""
+
+    // 花田總覽地圖
+    @State private var isOverviewMapPresented: Bool = false
+
     var onOpenShare: () -> Void
     var onOpenSettings: () -> Void
 
@@ -143,6 +158,22 @@ public struct ControlDrawerView: View {
         .sheet(isPresented: $isBlockedMushroomPresented) {
             BlockedMushroomView()
         }
+        .sheet(isPresented: $isOverviewMapPresented) {
+            FlowerStationMapView()
+        }
+        .alert("重新命名", isPresented: $isRenamePresented) {
+            TextField("輸入新名稱", text: $renameInputText)
+            Button("確認儲存") {
+                if let targetId = renameTargetId, !renameInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if renameTargetIsRoute {
+                        db.renameRoute(id: targetId, newName: renameInputText)
+                    } else {
+                        db.renameLocation(id: targetId, newName: renameInputText)
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
         .alert(isPresented: $isRouteSwitchConfirmPresented) {
             routeSwitchConfirmationAlert
         }
@@ -151,6 +182,51 @@ public struct ControlDrawerView: View {
         }
         .onAppear {
             speedInputText = String(format: "%.1f", session.speedKmh)
+        }
+    }
+
+
+    private var displayedLocations: [SavedLocation] {
+        var list = db.savedLocations
+        let q = locationSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !q.isEmpty {
+            list = list.filter {
+                $0.name.lowercased().contains(q) || $0.tag.lowercased().contains(q) || $0.note.lowercased().contains(q)
+            }
+        }
+        switch locationSortMode {
+        case .pinFirst:
+            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
+        case .nameAsc:
+            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        case .nameDesc:
+            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
+        case .timeDesc:
+            return list.sorted { $0.createdAt > $1.createdAt }
+        case .timeAsc:
+            return list.sorted { $0.createdAt < $1.createdAt }
+        }
+    }
+
+    private var displayedRoutes: [SavedRoute] {
+        var list = db.savedRoutes
+        let q = routeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !q.isEmpty {
+            list = list.filter {
+                $0.name.lowercased().contains(q) || $0.tag.lowercased().contains(q) || $0.note.lowercased().contains(q)
+            }
+        }
+        switch routeSortMode {
+        case .pinFirst:
+            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
+        case .nameAsc:
+            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        case .nameDesc:
+            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
+        case .timeDesc:
+            return list.sorted { $0.createdAt > $1.createdAt }
+        case .timeAsc:
+            return list.sorted { $0.createdAt < $1.createdAt }
         }
     }
 
@@ -172,6 +248,19 @@ public struct ControlDrawerView: View {
                 }
 
                 Spacer()
+
+                // 花田總覽地圖按鈕
+                Button(action: {
+                    hideKeyboard()
+                    isOverviewMapPresented = true
+                }) {
+                    Image(systemName: "map.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.blue)
+                        .padding(6)
+                        .background(Color.blue.opacity(0.12))
+                        .clipShape(Circle())
+                }
 
                 // 設定按鈕
                 Button(action: {
@@ -657,16 +746,56 @@ public struct ControlDrawerView: View {
             }
             .padding(.horizontal, 16)
 
+            // 搜尋與排序列
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                    TextField("搜尋座標名稱或標籤", text: $locationSearchText)
+                        .font(.system(size: 12))
+                    if !locationSearchText.isEmpty {
+                        Button(action: { locationSearchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 11))
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color(UIColor.secondarySystemBackground))
+                .cornerRadius(8)
+
+                Menu {
+                    ForEach(DatabaseSortMode.allCases) { mode in
+                        Button(mode.rawValue) { locationSortMode = mode }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 11))
+                        Text(locationSortMode.rawValue)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(8)
+                }
+            }
+            .padding(.horizontal, 16)
+
             // 座標清單 (依置頂與時間排序)
             ScrollView {
                 LazyVStack(spacing: 6) {
-                    if db.sortedLocations.isEmpty {
-                        Text("尚未儲存任何座標。可在地圖長按或點上方按鈕新增。")
+                    if displayedLocations.isEmpty {
+                        Text("無符合條件之座標。可在地圖長按或點上方按鈕新增。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .padding(.vertical, 24)
                     } else {
-                        ForEach(db.sortedLocations) { loc in
+                        ForEach(displayedLocations) { loc in
                             HStack(spacing: 6) {
                                 // 置頂按鈕
                                 Button(action: {
@@ -721,6 +850,20 @@ public struct ControlDrawerView: View {
                                             .background(Color.blue.opacity(0.1))
                                             .cornerRadius(6)
                                     }
+                                }
+
+                                // 重新命名
+                                Button(action: {
+                                    hideKeyboard()
+                                    renameTargetId = loc.id
+                                    renameTargetIsRoute = false
+                                    renameInputText = loc.name
+                                    isRenamePresented = true
+                                }) {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 24, height: 24)
                                 }
 
                                 // 編輯標籤
@@ -802,16 +945,56 @@ public struct ControlDrawerView: View {
             }
             .padding(.horizontal, 16)
 
+            // 路線搜尋與排序列
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                    TextField("搜尋路線名稱或標籤", text: $routeSearchText)
+                        .font(.system(size: 12))
+                    if !routeSearchText.isEmpty {
+                        Button(action: { routeSearchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 11))
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color(UIColor.secondarySystemBackground))
+                .cornerRadius(8)
+
+                Menu {
+                    ForEach(DatabaseSortMode.allCases) { mode in
+                        Button(mode.rawValue) { routeSortMode = mode }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 11))
+                        Text(routeSortMode.rawValue)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(8)
+                }
+            }
+            .padding(.horizontal, 16)
+
             // 路徑清單 (依置頂與時間排序)
             ScrollView {
                 LazyVStack(spacing: 6) {
-                    if db.sortedRoutes.isEmpty {
-                        Text("尚未儲存任何路線。請點擊上方按鈕匯入 GPX、CSV 或貼上座標。")
+                    if displayedRoutes.isEmpty {
+                        Text("無符合條件之路線。點上方按鈕匯入 GPX 或貼上座標。")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .padding(.vertical, 24)
                     } else {
-                        ForEach(db.sortedRoutes) { route in
+                        ForEach(displayedRoutes) { route in
                             HStack(spacing: 6) {
                                 // 置頂按鈕
                                 Button(action: {
@@ -886,6 +1069,20 @@ public struct ControlDrawerView: View {
                                     Image(systemName: "list.bullet.indent")
                                         .font(.system(size: 13))
                                         .foregroundColor(.blue)
+                                        .frame(width: 24, height: 24)
+                                }
+
+                                // 重新命名
+                                Button(action: {
+                                    hideKeyboard()
+                                    renameTargetId = route.id
+                                    renameTargetIsRoute = true
+                                    renameInputText = route.name
+                                    isRenamePresented = true
+                                }) {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
                                         .frame(width: 24, height: 24)
                                 }
 

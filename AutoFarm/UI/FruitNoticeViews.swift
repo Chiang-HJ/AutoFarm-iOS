@@ -20,7 +20,7 @@ public struct FruitNoticeBannerView: View {
                         .font(.system(size: 15))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("📣 目前有 \(station.matureFlowers.count) 處花田果實成熟待收！")
+                        Text(" 目前有 \(station.matureFlowers.count) 處花田果實成熟待收！")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(.white)
 
@@ -74,6 +74,7 @@ public struct FruitNoticeSheet: View {
 
     // 多選勾選的花田 index 集合
     @State private var selectedFlowerIndices: Set<Int> = []
+    @State private var isOverviewMapPresented: Bool = false
 
     private let distancePrefKey = "AutoFarm_FruitWalkDistance"
 
@@ -83,6 +84,24 @@ public struct FruitNoticeSheet: View {
         NavigationView {
             VStack(spacing: 0) {
                 List {
+                    // 花田總覽地圖入口
+                    Section {
+                        Button(action: { isOverviewMapPresented = true }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "map.fill")
+                                    .foregroundColor(.blue)
+                                Text("展開花田總覽地圖")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.blue)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+
                     // 1. 收果半徑與直徑步幅調節區塊
                     distanceSettingsSection
 
@@ -107,6 +126,9 @@ public struct FruitNoticeSheet: View {
                 trailing: Button("關閉") { dismiss() }
             )
             .onAppear(perform: setupInitialState)
+            .sheet(isPresented: $isOverviewMapPresented) {
+                FlowerStationMapView()
+            }
         }
     }
 
@@ -244,7 +266,7 @@ public struct FruitNoticeSheet: View {
                     HStack(spacing: 8) {
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: 18))
-                        Text("🚀 啟動所選 \(selectedFlowerIndices.count) 處花田依序收果 (直徑 \(Int(walkDistance))m)")
+                        Text(" 啟動所選 \(selectedFlowerIndices.count) 處花田依序收果 (直徑 \(Int(walkDistance))m)")
                             .font(.system(size: 15, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
@@ -310,7 +332,7 @@ public struct FruitNoticeSheet: View {
             loops: 0,
             walkDistance: walkDistance
         )
-        session.showToast("🟢 已啟動【\(selectedFlowers.count) 處花田】批量依序收果！")
+        session.showToast(" 已啟動【\(selectedFlowers.count) 處花田】批量依序收果！")
         dismiss()
     }
 }
@@ -352,7 +374,7 @@ private struct FruitFlowerCard: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text("🌸 「\(flower.name)」")
+                        Text(" 「\(flower.name)」")
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(.primary)
 
@@ -374,6 +396,12 @@ private struct FruitFlowerCard: View {
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
+
+                    if !flower.remark.isEmpty {
+                        Text("備註：\(flower.remark)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 Spacer()
@@ -383,7 +411,7 @@ private struct FruitFlowerCard: View {
 
             // 路線決策或無路線警示
             if !hasRoute {
-                // ⚠️ 無路線明確提醒
+                // 無路線明確提醒
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -425,25 +453,26 @@ private struct FruitFlowerCard: View {
                 // 具備匹配路線時的選擇與啟動 (精簡為單一最佳推薦路線)
                 if let bestMatch = matches.first(where: { $0.isHarvestRecommended }) ?? matches.first {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("📋 推薦收果路線：")
+                        Text(" 推薦收果路線：")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.secondary)
 
                         Button(action: {
+                            FlowerStationManager.shared.setPreferredRouteName(bestMatch.route.name, for: flower.name)
                             session.startFruitRoute(
                                 name: bestMatch.route.name,
                                 basePoints: bestMatch.route.nodes,
                                 loops: 0,
                                 walkDistance: walkDistance
                             )
-                            session.showToast("🟢 已啟動【\(bestMatch.route.name)】跳收果實 (直徑 \(Int(walkDistance))m)！")
+                            session.showToast("已啟動【\(bestMatch.route.name)】跳收果實 (直徑 \(Int(walkDistance))m)！")
                             onActionFinished()
                         }) {
                             HStack {
                                 Image(systemName: bestMatch.isHarvestRecommended ? "checkmark.circle.fill" : "play.circle")
                                     .foregroundColor(bestMatch.isHarvestRecommended ? .green : .blue)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(bestMatch.isHarvestRecommended ? "🟢 【推薦】" : "⚪ ")\(bestMatch.route.name)")
+                                    Text("\(bestMatch.isHarvestRecommended ? " 【推薦】" : "")\(bestMatch.route.name)")
                                         .font(.system(size: 13, weight: bestMatch.isHarvestRecommended ? .bold : .semibold))
                                         .foregroundColor(bestMatch.isHarvestRecommended ? .green : .primary)
                                     Text("共 \(bestMatch.route.nodes.count) 個航點・以 \(Int(walkDistance))m 直徑收果")

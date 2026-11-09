@@ -6,6 +6,7 @@ public struct SettingsSheet: View {
     @ObservedObject var pairingStore = PairingStore.shared
     @ObservedObject var certManager = CertificateCountdownManager.shared
     @ObservedObject var station = FlowerStationManager.shared
+    @ObservedObject var volumeMgr = VolumeButtonManager.shared
     @Environment(\.dismiss) var dismiss
 
     @State private var isTesting: Bool = false
@@ -286,7 +287,7 @@ public struct SettingsSheet: View {
                         HStack {
                             Text("連動狀態")
                             Spacer()
-                            Text("🟢 已綁定連線")
+                            Text(" 已綁定連線")
                                 .font(.subheadline)
                                 .foregroundColor(.green)
                         }
@@ -374,6 +375,42 @@ public struct SettingsSheet: View {
                             Text("關閉後隱藏主畫面上的方向盤及展開按鈕，釋放地圖視野")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                Section(header: Text("實體音量按鍵自訂控制")) {
+                    Toggle(isOn: $volumeMgr.isEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("啟用實體音量鍵控制")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("使用側邊實體按鍵控制巡航動作，並抑制系統音量提示遮擋畫面")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if volumeMgr.isEnabled {
+                        Picker(selection: $volumeMgr.volumeUpAction, label: HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.blue)
+                            Text("音量鍵 (+) 功能")
+                                .font(.system(size: 14))
+                        }) {
+                            ForEach(VolumeKeyAction.allCases) { action in
+                                Text(action.title).tag(action)
+                            }
+                        }
+
+                        Picker(selection: $volumeMgr.volumeDownAction, label: HStack {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundColor(.orange)
+                            Text("音量鍵 (-) 功能")
+                                .font(.system(size: 14))
+                        }) {
+                            ForEach(VolumeKeyAction.allCases) { action in
+                                Text(action.title).tag(action)
+                            }
                         }
                     }
                 }

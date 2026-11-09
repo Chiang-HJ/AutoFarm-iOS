@@ -37,7 +37,14 @@ public final class AutoFarmSession: ObservableObject {
     @Published public var routeLoopTarget: Int = 0 // 0 = 無限
     @Published public var routeCurrentLoop: Int = 0
     @Published public var cooldownRemainingSec: Int = 0
-    @Published public var speedKmh: Double = 18.0
+    @Published public var speedKmh: Double = {
+        let saved = UserDefaults.standard.double(forKey: "AutoFarm_SpeedKmh")
+        return saved > 0 ? saved : 18.0
+    }() {
+        didSet {
+            UserDefaults.standard.set(speedKmh, forKey: "AutoFarm_SpeedKmh")
+        }
+    }
 
     @Published public var cameraCenterTrigger: Int = 0
     @Published public var cameraRouteBoundsTrigger: Int = 0
@@ -383,30 +390,70 @@ public final class AutoFarmSession: ObservableObject {
         }
     }
 
-    /// 跳至上一航點
+    /// 跳至上一航點 / 上一朵花
     public func prevRoutePoint() {
         guard !routePoints.isEmpty else { return }
-        self.currentRouteIndex = (self.currentRouteIndex - 1 + routePoints.count) % routePoints.count
-        let prev = routePoints[self.currentRouteIndex]
-        self.currentLat = prev.lat
-        self.currentLng = prev.lng
-        self.cooldownRemainingSec = prev.waitTimeSec
-        self.waitAccumulatedMs = 0.0
-        pushCurrentLocation()
-        showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+        if executionMode == 1 { // 種花模式：以花苞基準點為單位切換
+            let total = max(displayWaypoints.count, 1)
+            let prevDisplayIdx = (currentDisplayIndex - 1 + total) % total
+            jumpToWaypoint(index: prevDisplayIdx)
+            showToast("已跳至第 \(prevDisplayIdx + 1) / \(total) 朵花")
+        } else if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
+            let total = originalBasePoints.count
+            let prevDisplayIdx = (currentDisplayIndex - 1 + total) % total
+            jumpToWaypoint(index: prevDisplayIdx)
+            showToast("已跳至第 \(prevDisplayIdx + 1) / \(total) 航點")
+        } else {
+            self.currentRouteIndex = (self.currentRouteIndex - 1 + routePoints.count) % routePoints.count
+            let prev = routePoints[self.currentRouteIndex]
+            self.currentLat = prev.lat
+            self.currentLng = prev.lng
+            self.cooldownRemainingSec = prev.waitTimeSec
+            self.waitAccumulatedMs = 0.0
+            pushCurrentLocation()
+            showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+        }
     }
 
-    /// 跳至下一航點
+    /// 跳至下一航點 / 下一朵花
     public func nextRoutePoint() {
         guard !routePoints.isEmpty else { return }
-        self.currentRouteIndex = (self.currentRouteIndex + 1) % routePoints.count
-        let next = routePoints[self.currentRouteIndex]
-        self.currentLat = next.lat
-        self.currentLng = next.lng
-        self.cooldownRemainingSec = next.waitTimeSec
-        self.waitAccumulatedMs = 0.0
-        pushCurrentLocation()
-        showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+        if executionMode == 1 { // 種花模式：以花苞基準點為單位切換
+            let total = max(displayWaypoints.count, 1)
+            let nextDisplayIdx = (currentDisplayIndex + 1) % total
+            jumpToWaypoint(index: nextDisplayIdx)
+            showToast("已跳至第 \(nextDisplayIdx + 1) / \(total) 朵花")
+        } else if !originalBasePoints.isEmpty && routePoints.count > originalBasePoints.count {
+            let total = originalBasePoints.count
+            let nextDisplayIdx = (currentDisplayIndex + 1) % total
+            jumpToWaypoint(index: nextDisplayIdx)
+            showToast("已跳至第 \(nextDisplayIdx + 1) / \(total) 航點")
+        } else {
+            self.currentRouteIndex = (self.currentRouteIndex + 1) % routePoints.count
+            let next = routePoints[self.currentRouteIndex]
+            self.currentLat = next.lat
+            self.currentLng = next.lng
+            self.cooldownRemainingSec = next.waitTimeSec
+            self.waitAccumulatedMs = 0.0
+            pushCurrentLocation()
+            showToast("已手動跳至第 \(self.currentRouteIndex + 1) 點")
+        }
+    }
+
+    /// 調整巡航速度 (+ / - delta)
+    public func adjustSpeed(by delta: Double) {
+        let newSpeed = max(1.0, min(100.0, speedKmh + delta))
+        self.speedKmh = newSpeed
+        showToast("巡航速度已調整為 \(String(format: "%.1f", newSpeed)) km/h")
+    }
+
+    /// 切換暫停與繼續
+    public func togglePauseResume() {
+        if isRoutePaused {
+            resumeRoute()
+        } else {
+            pauseRoute()
+        }
     }
 
     /// 直接輸入點位數字跳點 (1-indexed)
@@ -645,10 +692,14 @@ public final class AutoFarmSession: ObservableObject {
                 self.isRoutePaused = true
             }
 
+            self.engineQueue.sync {
+                self.waitAccumulatedMs = 0.0
+            }
+            self.cooldownRemainingSec = 0
             self.currentLat = lat
             self.currentLng = lng
             self.lastPushTime = Date().timeIntervalSinceReferenceDate
-            self.pushCurrentLocation()
+            self.pushCurrentLocation(lat: lat, lng: lng)
             self.ensureEngineRunning()
 
             let pointLabel = label.isEmpty ? "自訂座標" : label
@@ -808,6 +859,10 @@ public final class AutoFarmSession: ObservableObject {
 
         // 所有 @Published 狀態更新切回主執行緒，杜絕背景線程修改導致 MapKit 閃退
         DispatchQueue.main.async {
+            // 如果此時已經暫停且沒有在手動搖桿移動，杜絕用舊 tick 運算結果覆蓋當前瞬移的新座標
+            if self.isRoutePaused && !isMoving {
+                return
+            }
             if self.currentLat != nextLat { self.currentLat = nextLat }
             if self.currentLng != nextLng { self.currentLng = nextLng }
             if self.cooldownRemainingSec != nextCooldown { self.cooldownRemainingSec = nextCooldown }
@@ -825,7 +880,7 @@ public final class AutoFarmSession: ObservableObject {
             // 靜態錨定心跳 (Stationary Anchor Heartbeat)：每 1 秒重新向 locationd 注入當前座標
             if now - lastPushTime >= 1.0 {
                 lastPushTime = now
-                pushCurrentLocation(lat: nextLat, lng: nextLng)
+                pushCurrentLocation(lat: self.currentLat, lng: self.currentLng)
             }
         }
     }
@@ -917,7 +972,7 @@ public final class AutoFarmSession: ObservableObject {
             return
         }
 
-        showToast("🔍 正在進行通道握手預檢...")
+        showToast("正在進行通道握手預檢...")
         let pPath = pairingFilePath.isEmpty ? PairingStore.shared.pairingPath : pairingFilePath
         let targetLat = currentLat
         let targetLng = currentLng
@@ -935,7 +990,7 @@ public final class AutoFarmSession: ObservableObject {
                 case .success:
                     self.hasTestedHandshake = true
                     self.isSimulatingLocation = true
-                    self.showToast("🟢 通道握手成功，已建立定位連線！")
+                    self.showToast("通道握手成功，已建立定位連線！")
                     action()
                 case .failure(let err):
                     self.hasTestedHandshake = false
@@ -988,7 +1043,7 @@ public final class AutoFarmSession: ObservableObject {
                     self.isSimulatingLocation = true
                     self.lastPushTime = Date().timeIntervalSinceReferenceDate
                     self.ensureEngineRunning()
-                    self.showToast("🟢 通道握手成功！可開回行動數據開始巡航")
+                    self.showToast("通道握手成功！可開回行動數據開始巡航")
                 case .failure(let err):
                     self.hasTestedHandshake = false
                     self.isSimulatingLocation = false

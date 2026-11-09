@@ -112,27 +112,22 @@ public struct MainMapView: UIViewRepresentable {
             }
         }
 
-        // 5. 更新連線軌跡折線 (僅在路線名稱或航點數量改變時重繪，絕不在走路時每 100ms 重複重建！)
+        // 5. 更新連線軌跡折線：一律使用基準點/花點連心直線，絕不繪製數百個微步螺旋毛球線！
         let routeName = session.activeRouteName
-        let routePointsCount = session.routePoints.count
+        let baseCount = waypoints.count
 
         if context.coordinator.cachedOverlayRouteName != routeName ||
-           context.coordinator.cachedOverlayPointsCount != routePointsCount {
+           context.coordinator.cachedOverlayPointsCount != baseCount {
             
             context.coordinator.cachedOverlayRouteName = routeName
-            context.coordinator.cachedOverlayPointsCount = routePointsCount
+            context.coordinator.cachedOverlayPointsCount = baseCount
 
             if let oldPolyline = context.coordinator.currentPolyline {
                 mapView.removeOverlay(oldPolyline)
                 context.coordinator.currentPolyline = nil
             }
 
-            if routePointsCount > 1 {
-                let coords = session.routePoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
-                let polyline = MKPolyline(coordinates: coords, count: coords.count)
-                mapView.addOverlay(polyline)
-                context.coordinator.currentPolyline = polyline
-            } else if displayCount > 1 {
+            if baseCount > 1 {
                 let coords = waypoints.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
                 let polyline = MKPolyline(coordinates: coords, count: coords.count)
                 mapView.addOverlay(polyline)
@@ -140,24 +135,34 @@ public struct MainMapView: UIViewRepresentable {
             }
         }
 
-        // 6. 種花模式：僅在跨入不同花苞時更新 28m / 24m 範圍圓 (避免每 100ms 重建)
+        // 6. 種花模式：繪製各花點之覆蓋圓 (半徑 26m)，並在當前目標花點特別標示
         let isFlowerMode = (session.executionMode == 1)
         let targetFlowerIdx = isFlowerMode ? currentDisplayIdx : -1
 
-        if context.coordinator.cachedOverlayFlowerIndex != targetFlowerIdx {
+        if context.coordinator.cachedOverlayFlowerIndex != targetFlowerIdx ||
+           context.coordinator.cachedOverlayBaseCount != baseCount {
             context.coordinator.cachedOverlayFlowerIndex = targetFlowerIdx
+            context.coordinator.cachedOverlayBaseCount = baseCount
 
             if !context.coordinator.currentCircles.isEmpty {
                 mapView.removeOverlays(context.coordinator.currentCircles)
                 context.coordinator.currentCircles.removeAll()
             }
 
-            if isFlowerMode && displayCount > 0 && currentDisplayIdx < displayCount {
-                let currentFlower = waypoints[currentDisplayIdx]
-                let centerCoord = CLLocationCoordinate2D(latitude: currentFlower.lat, longitude: currentFlower.lng)
-                let circle28 = MKCircle(center: centerCoord, radius: 28.0)
-                let circle24 = MKCircle(center: centerCoord, radius: 24.0)
-                let newCircles = [circle28, circle24]
+            if isFlowerMode && baseCount > 0 {
+                var newCircles: [MKCircle] = []
+                for (i, flowerNode) in waypoints.enumerated() {
+                    let centerCoord = CLLocationCoordinate2D(latitude: flowerNode.lat, longitude: flowerNode.lng)
+                    if i == targetFlowerIdx {
+                        let circle28 = MKCircle(center: centerCoord, radius: 28.0)
+                        let circle24 = MKCircle(center: centerCoord, radius: 24.0)
+                        newCircles.append(circle28)
+                        newCircles.append(circle24)
+                    } else {
+                        let circle26 = MKCircle(center: centerCoord, radius: 26.0)
+                        newCircles.append(circle26)
+                    }
+                }
                 mapView.addOverlays(newCircles)
                 context.coordinator.currentCircles = newCircles
             }
@@ -183,6 +188,7 @@ public struct MainMapView: UIViewRepresentable {
         var cachedOverlayRouteName: String = ""
         var cachedOverlayPointsCount: Int = -1
         var cachedOverlayFlowerIndex: Int = -1
+        var cachedOverlayBaseCount: Int = -1
 
         init(_ parent: MainMapView) {
             self.parent = parent

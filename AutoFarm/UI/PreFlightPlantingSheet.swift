@@ -149,7 +149,7 @@ public struct PreFlightPlantingSheet: View {
                                     Text("已有其他花友卡位 (\(target.planter))")
                                         .foregroundColor(.orange)
                                 } else {
-                                    Text("🟢 空閒無人卡位 (可安全鎖定)")
+                                    Text(" 空閒無人卡位 (可安全鎖定)")
                                         .foregroundColor(.green)
                                 }
                             }

@@ -149,6 +149,7 @@ public final class FlowerStationManager: ObservableObject {
     public let apiKey = "AIzaSyDzhox-KgwVbbt3wI2MNPXujT7obOjjqHA"
     public let databaseBaseUrl = "https://pikmin-bloom-flower-default-rtdb.asia-southeast1.firebasedatabase.app"
     public let refererHeader = "https://cc123pikmin.vercel.app/"
+    public let originHeader = "https://cc123pikmin.vercel.app"
 
     // Published 狀態
     @Published public var allPoints: [FlowerStationPoint] = []
@@ -253,6 +254,7 @@ public final class FlowerStationManager: ObservableObject {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(refererHeader, forHTTPHeaderField: "Referer")
+        req.setValue(originHeader, forHTTPHeaderField: "Origin")
 
         let body: [String: Any] = [
             "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -312,6 +314,7 @@ public final class FlowerStationManager: ObservableObject {
         }
         var req = URLRequest(url: url)
         req.setValue(refererHeader, forHTTPHeaderField: "Referer")
+        req.setValue(originHeader, forHTTPHeaderField: "Origin")
         URLSession.shared.dataTask(with: req) { data, _, _ in
             if let data = data, let name = try? JSONSerialization.jsonObject(with: data) as? String {
                 completion(name)
@@ -355,6 +358,7 @@ public final class FlowerStationManager: ObservableObject {
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue(refererHeader, forHTTPHeaderField: "Referer")
+        req.setValue(originHeader, forHTTPHeaderField: "Origin")
         let postString = "grant_type=refresh_token&refresh_token=\(refreshToken)"
         req.httpBody = postString.data(using: .utf8)
 

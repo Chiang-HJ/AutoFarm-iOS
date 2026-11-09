@@ -121,8 +121,14 @@ public final class AutoFarmSession: ObservableObject {
         } else {
             self.pairingFilePath = PairingStore.shared.pairingPath
         }
-        self.isLoggedIn = UserDefaults.standard.bool(forKey: "AutoFarm_IsLoggedIn")
-        self.loggedInUsername = UserDefaults.standard.string(forKey: "AutoFarm_LoggedInUser") ?? ""
+        if FlowerStationManager.shared.isStationLoggedIn {
+            self.isLoggedIn = true
+            let name = FlowerStationManager.shared.stationDisplayName
+            self.loggedInUsername = !name.isEmpty ? name : FlowerStationManager.shared.stationEmail
+        } else {
+            self.isLoggedIn = UserDefaults.standard.bool(forKey: "AutoFarm_IsLoggedIn")
+            self.loggedInUsername = UserDefaults.standard.string(forKey: "AutoFarm_LoggedInUser") ?? ""
+        }
 
         setupLifecycleObservers()
     }
@@ -195,6 +201,7 @@ public final class AutoFarmSession: ObservableObject {
         self.loggedInUsername = ""
         UserDefaults.standard.set(false, forKey: "AutoFarm_IsLoggedIn")
         UserDefaults.standard.removeObject(forKey: "AutoFarm_LoggedInUser")
+        FlowerStationManager.shared.logoutStation()
         stopRoute()
         showToast("已登出帳號")
     }

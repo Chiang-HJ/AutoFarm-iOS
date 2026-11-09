@@ -3,8 +3,8 @@ import SwiftUI
 public struct LoginView: View {
     @ObservedObject var session = AutoFarmSession.shared
 
-    @State private var usernameInput: String = "user"
-    @State private var passwordInput: String = "123456"
+    @State private var emailInput: String = UserDefaults.standard.string(forKey: "AutoFarm_SavedLoginEmail") ?? ""
+    @State private var passwordInput: String = ""
     @State private var rememberMe: Bool = true
     @State private var errorMessage: String? = nil
     @State private var isLoading: Bool = false
@@ -37,24 +37,25 @@ public struct LoginView: View {
                         .font(.system(size: 26, weight: .bold))
                         .foregroundColor(.primary)
 
-                    Text("請先登入以解鎖虛擬定位與巡航功能")
+                    Text("請使用花田觀測站帳號登入以啟用巡航功能")
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                 }
 
                 // 登入表單卡片
                 VStack(spacing: 16) {
-                    // 帳號輸入框
+                    // 電子信箱輸入框
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("使用者帳號")
+                        Text("觀測站帳號 (電子信箱)")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.secondary)
                         HStack(spacing: 8) {
-                            Image(systemName: "person.fill")
+                            Image(systemName: "envelope.fill")
                                 .foregroundColor(.blue)
                                 .font(.system(size: 14))
-                            TextField("輸入帳號或電子郵件", text: $usernameInput)
+                            TextField("例如：user@gmail.com", text: $emailInput)
                                 .font(.system(size: 14))
+                                .keyboardType(.emailAddress)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
                         }
@@ -73,7 +74,7 @@ public struct LoginView: View {
                             Image(systemName: "lock.fill")
                                 .foregroundColor(.blue)
                                 .font(.system(size: 14))
-                            SecureField("輸入密碼", text: $passwordInput)
+                            SecureField("輸入觀測站密碼", text: $passwordInput)
                                 .font(.system(size: 14))
                         }
                         .padding(.horizontal, 12)
@@ -82,9 +83,9 @@ public struct LoginView: View {
                         .cornerRadius(10)
                     }
 
-                    // 記住我選項
+                    // 記住帳號選項
                     Toggle(isOn: $rememberMe) {
-                        Text("保持登入狀態")
+                        Text("記住此信箱帳號")
                             .font(.system(size: 13))
                             .foregroundColor(.secondary)
                     }
@@ -92,26 +93,32 @@ public struct LoginView: View {
 
                     // 錯誤訊息提示
                     if let err = errorMessage {
-                        Text(err)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(.red)
+                            Text(err)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     // 登入按鈕
                     Button(action: handleLogin) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 8) {
                             if isLoading {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             }
-                            Text(isLoading ? "驗證中..." : "登入 App")
+                            Text(isLoading ? "正在連線驗證..." : "登入觀測站帳號")
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
-                        .background(Color.blue)
+                        .background(isLoading ? Color.blue.opacity(0.6) : Color.blue)
                         .cornerRadius(10)
                     }
                     .disabled(isLoading)
@@ -125,7 +132,7 @@ public struct LoginView: View {
                 Spacer()
 
                 // 底部版權宣告
-                Text("AutoFarm iOS Client v1.0.0")
+                Text("AutoFarm iOS Client v1.0.0 (Pikmin Tracker Online)")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .padding(.bottom, 20)
@@ -135,11 +142,15 @@ public struct LoginView: View {
 
     private func handleLogin() {
         hideKeyboard()
-        let user = usernameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = emailInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let pass = passwordInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !user.isEmpty else {
-            errorMessage = "請輸入使用者帳號"
+        guard !email.isEmpty else {
+            errorMessage = "請輸入觀測站電子信箱帳號"
+            return
+        }
+        guard email.contains("@") else {
+            errorMessage = "請輸入有效的電子信箱格式（例如：user@gmail.com）"
             return
         }
         guard !pass.isEmpty else {
@@ -150,10 +161,21 @@ public struct LoginView: View {
         isLoading = true
         errorMessage = nil
 
-        // 模擬驗證並成功登入
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        FlowerStationManager.shared.loginToStation(email: email, pass: pass) { success, message in
             self.isLoading = false
-            self.session.login(username: user)
+            if success {
+                if self.rememberMe {
+                    UserDefaults.standard.set(email, forKey: "AutoFarm_SavedLoginEmail")
+                } else {
+                    UserDefaults.standard.removeObject(forKey: "AutoFarm_SavedLoginEmail")
+                }
+                let name = FlowerStationManager.shared.stationDisplayName.isEmpty ?
+                    (email.components(separatedBy: "@").first ?? "花友") :
+                    FlowerStationManager.shared.stationDisplayName
+                self.session.login(username: name)
+            } else {
+                self.errorMessage = message
+            }
         }
     }
 }

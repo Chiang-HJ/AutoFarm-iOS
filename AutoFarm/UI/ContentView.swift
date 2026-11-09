@@ -16,6 +16,7 @@ public struct ContentView: View {
     @State private var isBlockedMushroomPresented: Bool = false
     @State private var isFlowerStationMapPresented: Bool = false
     @State private var pendingResumeProgress: RouteProgress? = nil
+    @State private var hasCheckedResumeThisLaunch: Bool = false
 
     // 單點模式選定座標 (長按地圖 或 點擊目前位置觸發)
     @State private var selectedSingleCoord: CLLocationCoordinate2D? = nil
@@ -212,7 +213,7 @@ public struct ContentView: View {
                         pendingResumeProgress = nil
                     },
                     onIgnoreAndClear: {
-                        RouteProgressStore.clearProgress(for: resume.routeName)
+                        RouteProgressStore.clearAll()
                         pendingResumeProgress = nil
                     }
                 )
@@ -785,6 +786,8 @@ public struct ContentView: View {
     }
 
     private func checkUncompletedProgress() {
+        guard !hasCheckedResumeThisLaunch else { return }
+        hasCheckedResumeThisLaunch = true
         if let latest = RouteProgressStore.listAllSavedProgress().first {
             self.pendingResumeProgress = latest
         }

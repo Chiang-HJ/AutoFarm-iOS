@@ -3,11 +3,12 @@ import Combine
 import CoreLocation
 
 public enum DatabaseSortMode: String, CaseIterable, Identifiable {
-    case pinFirst = "置頂優先"
+    case recentlyUsed = "最近使用"
     case nameAsc = "名稱 A → Z"
     case nameDesc = "名稱 Z → A"
-    case timeDesc = "時間 新 → 舊"
-    case timeAsc = "時間 舊 → 新"
+    case timeDesc = "加入時間 (新→舊)"
+    case timeAsc = "加入時間 (舊→新)"
+    case pinFirst = "置頂優先"
 
     public var id: String { rawValue }
 }
@@ -21,6 +22,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
     public var tag: String = ""
     public var note: String = ""
     public var createdAt: Date = Date()
+    public var lastUsedAt: Date? = nil
 
     public init(
         id: UUID = UUID(),
@@ -30,7 +32,8 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
         isPinned: Bool = false,
         tag: String = "",
         note: String = "",
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        lastUsedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -40,6 +43,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
         self.tag = tag
         self.note = note
         self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -52,6 +56,7 @@ public struct SavedLocation: Identifiable, Codable, Equatable {
         self.tag = try container.decodeIfPresent(String.self, forKey: .tag) ?? ""
         self.note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
     }
 }
 
@@ -63,6 +68,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
     public var tag: String = ""
     public var note: String = ""
     public var createdAt: Date = Date()
+    public var lastUsedAt: Date? = nil
 
     public init(
         id: UUID = UUID(),
@@ -71,7 +77,8 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
         isPinned: Bool = false,
         tag: String = "",
         note: String = "",
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        lastUsedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -80,6 +87,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
         self.tag = tag
         self.note = note
         self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -91,6 +99,7 @@ public struct SavedRoute: Identifiable, Codable, Equatable {
         self.tag = try container.decodeIfPresent(String.self, forKey: .tag) ?? ""
         self.note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
     }
 }
 
@@ -185,19 +194,23 @@ public struct DatabaseBackupPayload: Codable {
     public var savedLocations: [SavedLocation] = []
     public var savedRoutes: [SavedRoute] = []
     public var locationHistory: [LocationHistoryItem] = []
+    // Android 相容格式
+    public var bookmarks: [String: String]? = nil
 
     public init(
         version: Int = 1,
         exportDate: Date = Date(),
         savedLocations: [SavedLocation],
         savedRoutes: [SavedRoute],
-        locationHistory: [LocationHistoryItem]
+        locationHistory: [LocationHistoryItem],
+        bookmarks: [String: String]? = nil
     ) {
         self.version = version
         self.exportDate = exportDate
         self.savedLocations = savedLocations
         self.savedRoutes = savedRoutes
         self.locationHistory = locationHistory
+        self.bookmarks = bookmarks
     }
 }
 
@@ -384,6 +397,20 @@ public final class SavedDatabaseStore: ObservableObject {
         guard !trimmed.isEmpty else { return }
         if let idx = savedRoutes.firstIndex(where: { $0.id == id }) {
             savedRoutes[idx].name = trimmed
+            saveRoutes()
+        }
+    }
+
+    public func useLocation(id: UUID) {
+        if let idx = savedLocations.firstIndex(where: { $0.id == id }) {
+            savedLocations[idx].lastUsedAt = Date()
+            saveLocations()
+        }
+    }
+
+    public func useRoute(name: String) {
+        if let idx = savedRoutes.firstIndex(where: { $0.name == name }) {
+            savedRoutes[idx].lastUsedAt = Date()
             saveRoutes()
         }
     }
@@ -591,10 +618,16 @@ public final class SavedDatabaseStore: ObservableObject {
 
     /// 匯出全庫完整備份檔 (JSON 格式，包含座標、路線與歷史紀錄)
     public func exportFullBackup() -> URL? {
+        var bMap: [String: String] = [:]
+        for loc in self.savedLocations {
+            bMap[loc.name] = "\(loc.latitude),\(loc.longitude)"
+        }
+
         let payload = DatabaseBackupPayload(
             savedLocations: self.savedLocations,
             savedRoutes: self.savedRoutes,
-            locationHistory: self.locationHistory
+            locationHistory: self.locationHistory,
+            bookmarks: bMap
         )
 
         let encoder = JSONEncoder()
@@ -615,8 +648,8 @@ public final class SavedDatabaseStore: ObservableObject {
         }
     }
 
-    /// 從 JSON 備份檔還原全庫資料 (merge=true 為合併新增，merge=false 為完全覆蓋)
-    public func restoreFullBackup(from url: URL, merge: Bool = false) -> (success: Bool, message: String) {
+    /// 從 JSON 備份檔還原全庫資料 (相容 iOS 備份與 Android APK 備份)
+    public func restoreFullBackup(from url: URL, merge: Bool = true) -> (success: Bool, message: String) {
         let isSecured = url.startAccessingSecurityScopedResource()
         defer {
             if isSecured { url.stopAccessingSecurityScopedResource() }
@@ -626,35 +659,64 @@ public final class SavedDatabaseStore: ObservableObject {
             return (false, "無法讀取備份檔案")
         }
 
-        guard let payload = try? JSONDecoder().decode(DatabaseBackupPayload.self, from: data) else {
+        var resolvedLocations: [SavedLocation] = []
+        var resolvedRoutes: [SavedRoute] = []
+        var resolvedHistory: [LocationHistoryItem] = []
+
+        if let payload = try? JSONDecoder().decode(DatabaseBackupPayload.self, from: data) {
+            resolvedLocations = payload.savedLocations
+            resolvedRoutes = payload.savedRoutes
+            resolvedHistory = payload.locationHistory
+            if resolvedLocations.isEmpty, let bms = payload.bookmarks {
+                for (name, coordStr) in bms {
+                    let parts = coordStr.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                    if parts.count >= 2, let lat = Double(parts[0]), let lng = Double(parts[1]) {
+                        resolvedLocations.append(SavedLocation(name: name, latitude: lat, longitude: lng))
+                    }
+                }
+            }
+        } else if let androidBookmarks = try? JSONDecoder().decode([String: String].self, from: data) {
+            for (name, coordStr) in androidBookmarks {
+                let parts = coordStr.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                if parts.count >= 2, let lat = Double(parts[0]), let lng = Double(parts[1]) {
+                    resolvedLocations.append(SavedLocation(name: name, latitude: lat, longitude: lng))
+                }
+            }
+        } else if let locList = try? JSONDecoder().decode([SavedLocation].self, from: data) {
+            resolvedLocations = locList
+        } else if let routeList = try? JSONDecoder().decode([SavedRoute].self, from: data) {
+            resolvedRoutes = routeList
+        } else {
             return (false, "備份檔案格式無效或已損壞")
         }
 
         if merge {
-            for loc in payload.savedLocations {
-                if !savedLocations.contains(where: { $0.id == loc.id }) {
+            for loc in resolvedLocations {
+                if !savedLocations.contains(where: { $0.id == loc.id || ($0.name == loc.name && abs($0.latitude - loc.latitude) < 0.0001) }) {
                     savedLocations.append(loc)
                 }
             }
-            for r in payload.savedRoutes {
-                if !savedRoutes.contains(where: { $0.id == r.id }) {
+            for r in resolvedRoutes {
+                if !savedRoutes.contains(where: { $0.id == r.id || $0.name == r.name }) {
                     savedRoutes.append(r)
                 }
             }
-            for h in payload.locationHistory {
+            for h in resolvedHistory {
                 if !locationHistory.contains(where: { $0.id == h.id }) {
                     locationHistory.append(h)
                 }
             }
         } else {
-            self.savedLocations = payload.savedLocations
-            self.savedRoutes = payload.savedRoutes
-            self.locationHistory = payload.locationHistory
+            self.savedLocations = resolvedLocations
+            self.savedRoutes = resolvedRoutes
+            self.locationHistory = resolvedHistory
         }
 
         saveLocations()
         saveRoutes()
         saveHistory()
+
+        return (true, "成功匯入 \(resolvedLocations.count) 個座標、\(resolvedRoutes.count) 條路線！")
 
         let totalLocs = payload.savedLocations.count
         let totalRoutes = payload.savedRoutes.count
@@ -746,6 +808,11 @@ public final class SavedDatabaseStore: ObservableObject {
                 let name = extractName(from: content) ?? fallbackName
                 routes.append(ParsedGPXRoute(name: name, nodes: nodes))
             }
+        }
+
+        // 使用者要求：路線名稱直接等於檔案名稱，不要依據 GPX 內部標籤亂縮減
+        if routes.count == 1 {
+            routes[0].name = fallbackName
         }
 
         return routes

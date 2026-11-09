@@ -57,11 +57,24 @@ public struct ControlDrawerView: View {
     @State private var showJumpPointAlert: Bool = false
     @State private var jumpPointInputText: String = ""
 
-    // 搜尋與排序
+    // 自由拖曳抽屜高度狀態 (緊湊 130, 半高 380, 全螢幕 640)
+    @State private var drawerHeight: CGFloat = 380
+    @GestureState private var dragOffset: CGFloat = 0
+
+    // 儲存目前位置命名詢問彈窗 (留空自動反向地理編碼國家地名)
+    @State private var isSaveLocationAlertPresented: Bool = false
+    @State private var saveLocationNameInput: String = ""
+
+    // 資料庫全備份匯出與還原 (相容 APK / IPA)
+    @State private var isBackupImporterPresented: Bool = false
+    @State private var exportBackupURL: URL? = nil
+    @State private var isExportSharePresented: Bool = false
+
+    // 搜尋與排序 (預設以最近使用優先排序)
     @State private var locationSearchText: String = ""
     @State private var routeSearchText: String = ""
-    @State private var locationSortMode: DatabaseSortMode = .pinFirst
-    @State private var routeSortMode: DatabaseSortMode = .pinFirst
+    @State private var locationSortMode: DatabaseSortMode = .recentlyUsed
+    @State private var routeSortMode: DatabaseSortMode = .recentlyUsed
 
     // 重新命名
     @State private var isRenamePresented: Bool = false
@@ -116,6 +129,7 @@ public struct ControlDrawerView: View {
                 .transition(.opacity)
             }
         }
+        .frame(height: max(130, min(UIScreen.main.bounds.height - 80, drawerHeight - dragOffset)), alignment: .top)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -174,8 +188,57 @@ public struct ControlDrawerView: View {
             }
             Button("取消", role: .cancel) {}
         }
-        .alert(isPresented: $isRouteSwitchConfirmPresented) {
-            routeSwitchConfirmationAlert
+        .alert("儲存目前座標", isPresented: $isSaveLocationAlertPresented) {
+            TextField("輸入座標名稱 (留空自動使用國家/地區名)", text: $saveLocationNameInput)
+            Button("確認儲存") {
+                let lat = session.currentLat
+                let lng = session.currentLng
+                let customName = saveLocationNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !customName.isEmpty {
+                    db.addLocation(name: customName, latitude: lat, longitude: lng)
+                    if let lastId = db.savedLocations.last?.id {
+                        db.useLocation(id: lastId)
+                    }
+                    session.showToast("已儲存座標：\(customName)")
+                } else {
+                    let loc = CLLocation(latitude: lat, longitude: lng)
+                    CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+                        var geoName = ""
+                        if let p = placemarks?.first {
+                            let parts = [p.country, p.administrativeArea, p.locality ?? p.subLocality, p.thoroughfare].compactMap { $0 }.filter { !$0.isEmpty }
+                            geoName = parts.joined(separator: " ")
+                        }
+                        let finalName = geoName.isEmpty ? String(format: "目前位置 (%.4f, %.4f)", lat, lng) : geoName
+                        DispatchQueue.main.async {
+                            self.db.addLocation(name: finalName, latitude: lat, longitude: lng)
+                            if let lastId = self.db.savedLocations.last?.id {
+                                self.db.useLocation(id: lastId)
+                            }
+                            self.session.showToast("已儲存座標：\(finalName)")
+                        }
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .fileImporter(
+            isPresented: $isBackupImporterPresented,
+            allowedContentTypes: [UTType.json, UTType.data, UTType.plainText],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let res = db.restoreFullBackup(from: url, merge: true)
+                session.showToast(res.message, isError: !res.success)
+            case .failure(let err):
+                session.showToast("讀取備份失敗：\(err.localizedDescription)", isError: true)
+            }
+        }
+        .sheet(isPresented: $isExportSharePresented) {
+            if let url = exportBackupURL {
+                ActivityViewController(activityItems: [url])
+            }
         }
         .actionSheet(isPresented: $isResumeRouteChoicePresented) {
             resumeRouteActionSheet
@@ -195,8 +258,8 @@ public struct ControlDrawerView: View {
             }
         }
         switch locationSortMode {
-        case .pinFirst:
-            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
+        case .recentlyUsed:
+            return list.sorted { ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt) }
         case .nameAsc:
             return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         case .nameDesc:
@@ -205,6 +268,8 @@ public struct ControlDrawerView: View {
             return list.sorted { $0.createdAt > $1.createdAt }
         case .timeAsc:
             return list.sorted { $0.createdAt < $1.createdAt }
+        case .pinFirst:
+            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
         }
     }
 
@@ -217,8 +282,8 @@ public struct ControlDrawerView: View {
             }
         }
         switch routeSortMode {
-        case .pinFirst:
-            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
+        case .recentlyUsed:
+            return list.sorted { ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt) }
         case .nameAsc:
             return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         case .nameDesc:
@@ -227,6 +292,8 @@ public struct ControlDrawerView: View {
             return list.sorted { $0.createdAt > $1.createdAt }
         case .timeAsc:
             return list.sorted { $0.createdAt < $1.createdAt }
+        case .pinFirst:
+            return list.sorted { ($0.isPinned ? 0 : 1) < ($1.isPinned ? 0 : 1) }
         }
     }
 
@@ -275,11 +342,12 @@ public struct ControlDrawerView: View {
                         .clipShape(Circle())
                 }
 
-                // 展開 / 收合切換
+                // 展開 / 收合切換 (點擊切換 130 <-> 380)
                 Button(action: {
                     hideKeyboard()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         isExpanded.toggle()
+                        drawerHeight = isExpanded ? 380 : 130
                     }
                 }) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
@@ -292,6 +360,22 @@ public struct ControlDrawerView: View {
             }
             .padding(.horizontal, 16)
         }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture()
+                .updating($dragOffset) { value, state, _ in
+                    state = value.translation.height
+                }
+                .onEnded { value in
+                    let rawHeight = drawerHeight - value.translation.height
+                    let snapPoints: [CGFloat] = [130, 380, 640]
+                    let target = snapPoints.min(by: { abs($0 - rawHeight) < abs($1 - rawHeight) }) ?? 380
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        drawerHeight = target
+                        isExpanded = target > 140
+                    }
+                }
+        )
     }
 
     private var headerTitle: String {
@@ -703,13 +787,11 @@ public struct ControlDrawerView: View {
         VStack(spacing: 6) {
             // 操作工具列
             HStack(spacing: 8) {
-                // 儲存目前位置快捷鍵
+                // 儲存目前位置快捷鍵 (彈出命名視窗，留空自動使用國家/地區地名)
                 Button(action: {
                     hideKeyboard()
-                    let lat = session.currentLat
-                    let lng = session.currentLng
-                    db.addLocation(name: "目前位置 \(db.savedLocations.count + 1)", latitude: lat, longitude: lng)
-                    session.toastMessage = "已儲存目前座標"
+                    saveLocationNameInput = ""
+                    isSaveLocationAlertPresented = true
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "location.badge.plus")
@@ -739,6 +821,47 @@ public struct ControlDrawerView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+            }
+            .padding(.horizontal, 16)
+
+            // 全庫備份與還原列 (相容 APK / IPA)
+            HStack(spacing: 8) {
+                Button(action: {
+                    hideKeyboard()
+                    if let url = db.exportFullBackup() {
+                        exportBackupURL = url
+                        isExportSharePresented = true
+                    } else {
+                        session.showToast("匯出備份失敗", isError: true)
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("匯出全庫 (JSON)")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+
+                Button(action: {
+                    hideKeyboard()
+                    isBackupImporterPresented = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.down")
+                        Text("匯入備份 (相容APK)")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
                     .background(Color(UIColor.secondarySystemBackground))
                     .foregroundColor(.primary)
                     .cornerRadius(8)
@@ -811,6 +934,7 @@ public struct ControlDrawerView: View {
                                 // 點擊直接瞬移 (方案 A：路線中斷時暫存離開點並暫停路線，按繼續時瞬移回原處接續)
                                 Button(action: {
                                     hideKeyboard()
+                                    db.useLocation(id: loc.id)
                                     session.teleport(to: loc.latitude, lng: loc.longitude, label: loc.name)
                                 }) {
                                     HStack(spacing: 8) {
@@ -897,7 +1021,7 @@ public struct ControlDrawerView: View {
                 }
                 .padding(.horizontal, 16)
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: max(220, drawerHeight - 180))
         }
     }
 
@@ -1129,7 +1253,7 @@ public struct ControlDrawerView: View {
                 }
                 .padding(.horizontal, 16)
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: max(220, drawerHeight - 180))
         }
     }
 
@@ -1245,7 +1369,7 @@ public struct ControlDrawerView: View {
                 }
                 .padding(.horizontal, 16)
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: max(220, drawerHeight - 180))
         }
     }
 
@@ -1271,14 +1395,8 @@ public struct ControlDrawerView: View {
 
     // MARK: - 路線點擊處理邏輯 (切換路線確認 + 暫存進度詢問)
     private func handleRouteSelected(_ route: SavedRoute) {
-        // 1. 若目前有路線正在運行且不是同一條
-        if !session.routePoints.isEmpty && session.activeRouteName != route.name {
-            self.pendingTargetRoute = route
-            self.isRouteSwitchConfirmPresented = true
-            return
-        }
-
-        // 2. 檢查該路線是否有暫存進度
+        db.useRoute(name: route.name)
+        // 直接開啟路線配置視窗，由使用者選擇模式並開跑 (開跑時自動替換舊路線)
         checkAndProceedWithRoute(route)
     }
 
@@ -1531,4 +1649,16 @@ extension View {
     public func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
+}
+
+// MARK: - UIActivityViewController 封裝 (供資料庫全備份 JSON 匯出分享)
+public struct ActivityViewController: UIViewControllerRepresentable {
+    var activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
+
+    public func makeUIViewController(context: UIViewControllerRepresentableContext<ActivityViewController>) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
+    }
+
+    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: UIViewControllerRepresentableContext<ActivityViewController>) {}
 }

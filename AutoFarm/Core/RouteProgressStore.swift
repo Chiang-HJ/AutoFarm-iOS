@@ -65,6 +65,10 @@ public final class RouteProgressStore {
         saveAllProgressDict(all)
     }
 
+    public static func clearAll() {
+        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+    }
+
     public static func hasProgress(for routeName: String) -> Bool {
         return getProgress(for: routeName) != nil
     }

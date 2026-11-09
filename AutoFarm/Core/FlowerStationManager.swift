@@ -541,7 +541,8 @@ public final class FlowerStationManager: ObservableObject {
         var hullPoints: [HullPoint]? = nil
         if let rawHull = raw["hull"] as? [[String: Any]] {
             hullPoints = rawHull.compactMap { dict in
-                guard let hLat = dict["lat"] as? Double, let hLng = dict["lng"] as? Double else { return nil }
+                guard let hLat = (dict["lat"] as? Double) ?? (dict["latitude"] as? Double),
+                      let hLng = (dict["lng"] as? Double) ?? (dict["lon"] as? Double) ?? (dict["longitude"] as? Double) else { return nil }
                 return HullPoint(lat: hLat, lng: hLng)
             }
         } else if let rawHullArr = raw["hull"] as? [[Double]] {

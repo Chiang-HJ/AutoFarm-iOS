@@ -20,6 +20,7 @@ public struct SettingsSheet: View {
     @State private var stationPassInput: String = ""
     @State private var isStationLoggingIn: Bool = false
     @State private var stationLoginMsg: String? = nil
+    @State private var isDeleteAccountAlertPresented: Bool = false
 
     private let dateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -435,11 +436,33 @@ public struct SettingsSheet: View {
                             Spacer()
                         }
                     }
+                    .foregroundColor(.orange)
+
+                    Button(action: {
+                        isDeleteAccountAlertPresented = true
+                    }) {
+                        HStack {
+                            Spacer()
+                            Image(systemName: "trash.fill")
+                            Text("刪除此帳號")
+                                .fontWeight(.bold)
+                            Spacer()
+                        }
+                    }
                     .foregroundColor(.red)
                 }
             }
             .navigationTitle("連線設定")
             .navigationBarItems(trailing: Button("完成") { dismiss() })
+            .alert("確定要刪除此帳號嗎？", isPresented: $isDeleteAccountAlertPresented) {
+                Button("刪除帳號", role: .destructive) {
+                    dismiss()
+                    session.deleteAccount()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此動作將從本機清空此帳號的所有憑證與登入狀態。")
+            }
             .fileImporter(
                 isPresented: $isShowingFilePicker,
                 allowedContentTypes: PairingStore.supportedTypes,

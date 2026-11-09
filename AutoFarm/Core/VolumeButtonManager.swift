@@ -78,6 +78,12 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
 
     private var isObserving = false
     private var volumeView: MPVolumeView?
+    private var lastTriggerTime: TimeInterval = 0
+    private var isResettingVolume: Bool = false
+
+    private var volumeSlider: UISlider? {
+        volumeView?.subviews.first(where: { $0 is UISlider }) as? UISlider
+    }
 
     private override init() {
         super.init()
@@ -108,6 +114,15 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
                     self.volumeView = v
                 }
             }
+
+            // 初始化時將系統音量調至 0.5 中點
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.isResettingVolume = true
+                self.volumeSlider?.setValue(0.5, animated: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    self.isResettingVolume = false
+                }
+            }
         }
     }
 
@@ -121,14 +136,33 @@ public final class VolumeButtonManager: NSObject, ObservableObject {
 
     public override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         guard keyPath == "outputVolume", let change = change else { return }
+        if isResettingVolume { return }
+
         guard let newVolume = change[.newKey] as? Float, let oldVolume = change[.oldKey] as? Float else { return }
-        if abs(newVolume - oldVolume) < 0.001 { return }
+        if abs(newVolume - oldVolume) < 0.0005 { return }
+
+        let now = Date().timeIntervalSinceReferenceDate
+        // 防抖閥值 0.35 秒，杜絕硬體一次按壓重複觸發 (+2)
+        guard now - lastTriggerTime > 0.35 else { return }
+        lastTriggerTime = now
+
+        let isUp = (newVolume > oldVolume) || (newVolume >= 0.99)
+        let isDown = (newVolume < oldVolume) || (newVolume <= 0.01)
 
         DispatchQueue.main.async {
-            if newVolume > oldVolume {
+            if isUp {
                 self.executeAction(self.volumeUpAction)
-            } else {
+            } else if isDown {
                 self.executeAction(self.volumeDownAction)
+            }
+
+            // 將滑桿重設回 0.5，讓音量鍵 (+) 與 (-) 永遠處於可感測區間
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                self.isResettingVolume = true
+                self.volumeSlider?.setValue(0.5, animated: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    self.isResettingVolume = false
+                }
             }
         }
     }

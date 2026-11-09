@@ -118,6 +118,7 @@ public final class AutoFarmSession: ObservableObject {
     private let engineQueue = DispatchQueue(label: "com.autofarm.engine.timer", qos: .userInteractive)
     private var lastTickTime: TimeInterval = 0.0
     private var lastPushTime: TimeInterval = 0.0
+    private var lastUiCoordDispatchTime: TimeInterval = 0.0
     private var waitAccumulatedMs: Double = 0.0
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
@@ -211,6 +212,17 @@ public final class AutoFarmSession: ObservableObject {
         FlowerStationManager.shared.logoutStation()
         stopRoute()
         showToast("已登出帳號")
+    }
+
+    public func deleteAccount() {
+        logout()
+        UserDefaults.standard.removeObject(forKey: "com.autofarm.user_auth")
+        UserDefaults.standard.removeObject(forKey: "station_user_email")
+        UserDefaults.standard.removeObject(forKey: "station_user_pwd")
+        UserDefaults.standard.removeObject(forKey: "AutoFarm_StationDisplayName")
+        UserDefaults.standard.removeObject(forKey: "AutoFarm_StationEmail")
+        FlowerStationManager.shared.logoutStation()
+        showToast("已刪除並清空此帳號的所有本機憑證")
     }
 
     // MARK: - Route Execution Controls
@@ -462,32 +474,50 @@ public final class AutoFarmSession: ObservableObject {
         ensureHandshakeVerified(actionName: "跳點巡航") { [weak self] in
             guard let self = self else { return }
             let validIdx = min(max(index, 0), max(self.displayWaypoints.count - 1, 0))
+            var targetLat = self.currentLat
+            var targetLng = self.currentLng
+            var targetNodeIdx = self.currentRouteIndex
+
             if self.executionMode == 1 { // 種花模式：尋找對應 flowerIndex 的第一個節點
                 let targetFlowerNum = validIdx + 1
                 if let nodeIdx = self.routePoints.firstIndex(where: { $0.flowerIndex == targetFlowerNum }) {
-                    self.currentRouteIndex = nodeIdx
-                    self.currentLat = self.routePoints[nodeIdx].lat
-                    self.currentLng = self.routePoints[nodeIdx].lng
+                    targetNodeIdx = nodeIdx
+                    targetLat = self.routePoints[nodeIdx].lat
+                    targetLng = self.routePoints[nodeIdx].lng
                 } else if validIdx < self.displayWaypoints.count {
                     let node = self.displayWaypoints[validIdx]
-                    self.currentLat = node.lat
-                    self.currentLng = node.lng
+                    targetLat = node.lat
+                    targetLng = node.lng
                 }
             } else if !self.originalBasePoints.isEmpty && self.routePoints.count > self.originalBasePoints.count {
                 let ratio = Double(validIdx) / Double(self.originalBasePoints.count)
                 let nodeIdx = min(Int(ratio * Double(self.routePoints.count)), max(self.routePoints.count - 1, 0))
-                self.currentRouteIndex = nodeIdx
-                self.currentLat = self.routePoints[nodeIdx].lat
-                self.currentLng = self.routePoints[nodeIdx].lng
+                targetNodeIdx = nodeIdx
+                targetLat = self.routePoints[nodeIdx].lat
+                targetLng = self.routePoints[nodeIdx].lng
             } else if validIdx < self.routePoints.count {
-                self.currentRouteIndex = validIdx
-                self.currentLat = self.routePoints[validIdx].lat
-                self.currentLng = self.routePoints[validIdx].lng
+                targetNodeIdx = validIdx
+                targetLat = self.routePoints[validIdx].lat
+                targetLng = self.routePoints[validIdx].lng
             }
+
+            // 原子化同步至引擎背景線程，杜絕任何時間差與舊位置覆蓋
+            self.engineQueue.sync {
+                self.currentLat = targetLat
+                self.currentLng = targetLng
+                self.currentRouteIndex = targetNodeIdx
+                self.waitAccumulatedMs = 0.0
+                self.cooldownRemainingSec = 0
+                self.lastTickTime = Date().timeIntervalSinceReferenceDate
+            }
+
+            self.currentLat = targetLat
+            self.currentLng = targetLng
+            self.currentRouteIndex = targetNodeIdx
             self.cooldownRemainingSec = 0
             self.waitAccumulatedMs = 0.0
             self.isRoutePaused = false // 從此點開始運行，保持自動巡航
-            self.pushCurrentLocation()
+            self.pushCurrentLocation(lat: targetLat, lng: targetLng)
             self.ensureEngineRunning()
             self.autoSaveCurrentProgress()
             self.showToast("已從第 \(validIdx + 1) 個航點開始巡航")
@@ -853,19 +883,23 @@ public final class AutoFarmSession: ObservableObject {
 
         self.waitAccumulatedMs = updatedWaitAccumMs
 
-        // 所有 @Published 狀態更新切回主執行緒，杜絕背景線程修改導致 MapKit 閃退
-        DispatchQueue.main.async {
-            // 如果此時已經暫停且沒有在手動搖桿移動，杜絕用舊 tick 運算結果覆蓋當前瞬移的新座標
-            if self.isRoutePaused && !isMoving {
-                return
-            }
-            if self.currentLat != nextLat { self.currentLat = nextLat }
-            if self.currentLng != nextLng { self.currentLng = nextLng }
-            if self.cooldownRemainingSec != nextCooldown { self.cooldownRemainingSec = nextCooldown }
-            if self.currentRouteIndex != nextIndex { self.currentRouteIndex = nextIndex }
-            if self.routeCurrentLoop != nextLoop { self.routeCurrentLoop = nextLoop }
-            if self.isRoutePaused != shouldPause {
-                self.isRoutePaused = shouldPause
+        // 節流主執行緒 @Published 派發頻率至 2.5Hz (或在點位/圈數變化時即時派發)，杜絕每 100ms 觸發整頁重繪導致鍵盤輸入卡頓
+        let shouldUpdateUiCoords = (now - lastUiCoordDispatchTime >= 0.4) || (self.currentRouteIndex != nextIndex) || (self.routeCurrentLoop != nextLoop)
+        if shouldUpdateUiCoords {
+            lastUiCoordDispatchTime = now
+            DispatchQueue.main.async {
+                // 如果此時已經暫停且沒有在手動搖桿移動，杜絕用舊 tick 運算結果覆蓋當前瞬移的新座標
+                if self.isRoutePaused && !isMoving {
+                    return
+                }
+                if self.currentLat != nextLat { self.currentLat = nextLat }
+                if self.currentLng != nextLng { self.currentLng = nextLng }
+                if self.cooldownRemainingSec != nextCooldown { self.cooldownRemainingSec = nextCooldown }
+                if self.currentRouteIndex != nextIndex { self.currentRouteIndex = nextIndex }
+                if self.routeCurrentLoop != nextLoop { self.routeCurrentLoop = nextLoop }
+                if self.isRoutePaused != shouldPause {
+                    self.isRoutePaused = shouldPause
+                }
             }
         }
 

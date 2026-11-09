@@ -55,7 +55,12 @@ public struct FruitNoticeBannerView: View {
     }
 
     private func flowersSummary() -> String {
-        let names = station.matureFlowers.prefix(4).map { $0.name }
+        let names = station.matureFlowers.prefix(4).map { flower -> String in
+            if !flower.remark.isEmpty {
+                return "\(flower.name) (\(flower.remark))"
+            }
+            return flower.name
+        }
         if station.matureFlowers.count > 4 {
             return "\(names.joined(separator: "、")) 等 \(station.matureFlowers.count) 處"
         }

@@ -19,6 +19,9 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
         mapView.showsCompass = true
         mapView.showsScale = true
 
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMapTap(_:)))
+        mapView.addGestureRecognizer(tapGesture)
+
         // 初始預設視角：以第一個點位或台北為中心
         if let first = station.allPoints.first(where: { $0.coordinate != nil }), let coord = first.coordinate {
             let region = MKCoordinateRegion(center: coord, latitudinalMeters: 4000, longitudinalMeters: 4000)
@@ -31,8 +34,8 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
     public func updateUIView(_ mapView: MKMapView, context: Context) {
         context.coordinator.parent = self
 
-        // 若資料點改變，重建覆蓋層與標註
-        let points = station.allPoints
+        // 使用者要求：花田總覽只顯示印度的花田 ("印")
+        let points = station.allPoints.filter { $0.name.hasPrefix("印") }
         if context.coordinator.cachedPointCount != points.count {
             context.coordinator.cachedPointCount = points.count
 
@@ -45,13 +48,13 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
             for p in points {
                 guard let center = p.coordinate else { continue }
 
-                // 1. 多邊形或圓形覆蓋層
+                // 1. 多邊形花田路線輪廓邊框 (Convex Hull / 收果路線)
                 if let hull = p.hull, hull.count >= 3 {
                     let coords = hull.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
-                    let polygon = StationPolygon(coordinates: coords, count: coords.count, point: p)
+                    let polygon = StationPolygon(coordinates: coords, count: coords.count, point: p, polygonCoordinates: coords)
                     newOverlays.append(polygon)
                 } else {
-                    let circle = StationCircle(center: center, radius: 35.0, point: p)
+                    let circle = StationCircle(center: center, radius: 45.0, point: p)
                     newOverlays.append(circle)
                 }
 
@@ -91,16 +94,16 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
             if let poly = overlay as? StationPolygon {
                 let renderer = MKPolygonRenderer(polygon: poly)
                 let isCooling = poly.point.isCounting
-                renderer.fillColor = isCooling ? UIColor.systemRed.withAlphaComponent(0.25) : UIColor.systemGreen.withAlphaComponent(0.25)
+                renderer.fillColor = isCooling ? UIColor.systemRed.withAlphaComponent(0.20) : UIColor.systemGreen.withAlphaComponent(0.20)
                 renderer.strokeColor = isCooling ? UIColor.systemRed : UIColor.systemGreen
-                renderer.lineWidth = 1.8
+                renderer.lineWidth = 2.8
                 return renderer
             } else if let circle = overlay as? StationCircle {
                 let renderer = MKCircleRenderer(circle: circle)
                 let isCooling = circle.point.isCounting
-                renderer.fillColor = isCooling ? UIColor.systemRed.withAlphaComponent(0.25) : UIColor.systemGreen.withAlphaComponent(0.25)
+                renderer.fillColor = isCooling ? UIColor.systemRed.withAlphaComponent(0.20) : UIColor.systemGreen.withAlphaComponent(0.20)
                 renderer.strokeColor = isCooling ? UIColor.systemRed : UIColor.systemGreen
-                renderer.lineWidth = 1.8
+                renderer.lineWidth = 2.8
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
@@ -129,15 +132,59 @@ public struct FlowerStationMapContainer: UIViewRepresentable {
             parent.selectedPoint = stationAnno.point
             parent.onSelectPoint?(stationAnno.point)
         }
+
+        @objc public func handleMapTap(_ gesture: UITapGestureRecognizer) {
+            guard let mapView = gesture.view as? MKMapView else { return }
+            let tapLocation = gesture.location(in: mapView)
+            let tapCoord = mapView.convert(tapLocation, toCoordinateFrom: mapView)
+            let tapMapPoint = MKMapPoint(tapCoord)
+
+            for overlay in mapView.overlays.reversed() {
+                if let poly = overlay as? StationPolygon {
+                    if poly.boundingMapRect.contains(tapMapPoint) && pointInPolygon(point: tapCoord, polygon: poly.polygonCoordinates) {
+                        parent.selectedPoint = poly.point
+                        parent.onSelectPoint?(poly.point)
+                        return
+                    }
+                } else if let circle = overlay as? StationCircle {
+                    let centerPoint = MKMapPoint(circle.coordinate)
+                    let distance = centerPoint.distance(to: tapMapPoint)
+                    if distance <= circle.radius {
+                        parent.selectedPoint = circle.point
+                        parent.onSelectPoint?(circle.point)
+                        return
+                    }
+                }
+            }
+        }
+
+        private func pointInPolygon(point: CLLocationCoordinate2D, polygon: [CLLocationCoordinate2D]) -> Bool {
+            guard polygon.count >= 3 else { return false }
+            var isInside = false
+            var j = polygon.count - 1
+            for i in 0..<polygon.count {
+                if (polygon[i].longitude < point.longitude && polygon[j].longitude >= point.longitude ||
+                    polygon[j].longitude < point.longitude && polygon[i].longitude >= point.longitude) {
+                    if (polygon[i].latitude + (point.longitude - polygon[i].longitude) / (polygon[j].longitude - polygon[i].longitude) * (polygon[j].latitude - polygon[i].latitude) < point.latitude) {
+                        isInside.toggle()
+                    }
+                }
+                j = i
+            }
+            return isInside
+        }
     }
 }
 
 // MARK: - 自定義地圖元素
 public class StationPolygon: MKPolygon {
     public var point: FlowerStationPoint!
-    public convenience init(coordinates coords: UnsafePointer<CLLocationCoordinate2D>, count: Int, point: FlowerStationPoint) {
+    public var polygonCoordinates: [CLLocationCoordinate2D] = []
+
+    public convenience init(coordinates coords: UnsafePointer<CLLocationCoordinate2D>, count: Int, point: FlowerStationPoint, polygonCoordinates: [CLLocationCoordinate2D] = []) {
         self.init(coordinates: coords, count: count)
         self.point = point
+        self.polygonCoordinates = polygonCoordinates
     }
 }
 
@@ -285,10 +332,11 @@ public struct FlowerStationMapView: View {
         .padding(.vertical, 6)
     }
 
-    // MARK: - 空間待命 / 冷卻中 頁籤列 (對齊附圖)
+    // MARK: - 空間待命 / 冷卻中 頁籤列 (對齊附圖，僅統計印度花田)
     private var filterTabsBar: some View {
-        let idleCount = station.allPoints.filter { !$0.isCounting }.count
-        let coolingCount = station.allPoints.filter { $0.isCounting }.count
+        let indiaPoints = station.allPoints.filter { $0.name.hasPrefix("印") }
+        let idleCount = indiaPoints.filter { !$0.isCounting }.count
+        let coolingCount = indiaPoints.filter { $0.isCounting }.count
 
         return HStack(spacing: 12) {
             // 空間待命按鈕
@@ -325,9 +373,9 @@ public struct FlowerStationMapView: View {
         .padding(.vertical, 8)
     }
 
-    // MARK: - 花田清單
+    // MARK: - 花田清單 (使用者要求：僅顯示印度花田)
     private var filteredPoints: [FlowerStationPoint] {
-        var list = station.allPoints
+        var list = station.allPoints.filter { $0.name.hasPrefix("印") }
         if filterTab == 0 {
             list = list.filter { !$0.isCounting }
         } else {
@@ -576,9 +624,15 @@ public struct FlowerStationMapView: View {
                 isSlottingSheetPresented = false
 
                 if startCruise {
-                    // 若有對應座標，立即瞬移並啟動本地巡航
+                    // 若有對應座標，立即瞬移並啟動本地巡航，同時記錄進歷史紀錄
                     if let coord = point.coordinate {
                         session.teleport(to: coord, label: point.name)
+                        SavedDatabaseStore.shared.addRouteHistory(
+                            name: "觀測站【\(point.name)】",
+                            basePoints: [RouteNode(lat: coord.latitude, lng: coord.longitude, label: point.name)],
+                            loops: 0,
+                            mode: 1
+                        )
                     }
                     dismiss()
                 }

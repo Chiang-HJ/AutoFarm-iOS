@@ -57,8 +57,8 @@ public struct ControlDrawerView: View {
     @State private var showJumpPointAlert: Bool = false
     @State private var jumpPointInputText: String = ""
 
-    // 自由拖曳抽屜高度狀態 (緊湊 165/285, 半高 460/580, 全螢幕)
-    @State private var drawerHeight: CGFloat = 460
+    // 自由拖曳抽屜高度狀態 (緊湊 175/320, 半高 480/600, 全螢幕)
+    @State private var drawerHeight: CGFloat = 480
     @GestureState private var dragOffset: CGFloat = 0
 
     // 儲存目前位置命名詢問彈窗 (留空自動反向地理編碼國家地名)
@@ -106,11 +106,11 @@ public struct ControlDrawerView: View {
     }
 
     private var minCollapsedHeight: CGFloat {
-        session.routePoints.isEmpty ? 165 : 285
+        session.routePoints.isEmpty ? 175 : 320
     }
 
     private var defaultExpandedHeight: CGFloat {
-        session.routePoints.isEmpty ? 460 : 580
+        session.routePoints.isEmpty ? 480 : 600
     }
 
     public var body: some View {
@@ -129,15 +129,18 @@ public struct ControlDrawerView: View {
                 }
 
                 if isExpanded {
-                    Group {
-                        if selectedTab == 0 {
-                            locationsSection
-                        } else if selectedTab == 1 {
-                            routesSection
-                        } else {
-                            locationHistorySection
-                        }
+                    // 三大資料庫分頁切換 (原生支援手勢左右滑動切換，極致流暢)
+                    TabView(selection: $selectedTab) {
+                        locationsSection
+                            .tag(0)
+
+                        routesSection
+                            .tag(1)
+
+                        locationHistorySection
+                            .tag(2)
                     }
+                    .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
                     .transition(.opacity)
                 } else {
                     Spacer(minLength: 0)
@@ -156,6 +159,7 @@ public struct ControlDrawerView: View {
             .background(Color(UIColor.systemBackground))
         }
         .frame(height: max(minCollapsedHeight, min(UIScreen.main.bounds.height - 80, drawerHeight)))
+        .clipped()
         .offset(y: dragOffset)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
